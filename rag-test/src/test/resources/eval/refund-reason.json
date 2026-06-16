@@ -1,0 +1,37 @@
+{
+  "_comment": "买家不喜欢退货，运费谁出",
+  "kbId": "kb-refund-reason",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/refund-reason-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-refund-reason",
+    "kbId": "kb-refund-reason",
+    "documentId": "kb-refund-reason/doc-refund-reason-v1",
+    "title": "退货运费规则",
+    "sections": [
+      {
+        "heading": "买家主观原因退货",
+        "body": "买家因个人原因（不喜欢、不想要、拍错等）申请退货时，退货运费由买家自行承担。若商品有运费险，可由运费险赔付首重运费。运费险赔付金额以保单约定为准，不足部分由买家承担。"
+      },
+      {
+        "heading": "商家原因退货",
+        "body": "因商家原因（发错货、描述不符、质量问题等）导致的退货，退货运费由商家承担。买家先行垫付运费，商家收到退货后凭有效运单报销实际运费。"
+      },
+      {
+        "heading": "运费险说明",
+        "body": "运费险是可选增值服务，在订单页面可勾选购买。理赔金额一般在8-25元之间，具体以投保时显示的保额为准。理赔款通常在退货完成后72小时内到账。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "bob",
+    "rawText": "我买了衣服但不想要了，退货的运费谁出",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "买家自行承担",
+    "mustContainSourceUri": "https://docs.example.com/refund-reason-policy"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "_comment": "运输损坏/签收前破损",
+  "kbId": "kb-shipping-damage",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/shipping-damage-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-shipping-damage",
+    "kbId": "kb-shipping-damage",
+    "documentId": "kb-shipping-damage/doc-shipping-damage-v1",
+    "title": "运输损坏处理规则",
+    "sections": [
+      {
+        "heading": "签收前破损",
+        "body": "如发现快递包装明显破损或变形，建议当面拒收并拍照留存。拒收后商家将补发或退款。若已签收后发现内物破损，需在签收后24小时内联系客服并提供破损照片及快递面单。"
+      },
+      {
+        "heading": "物流责任认定",
+        "body": "运输途中造成的商品破损，由商家向物流公司追责。买家无需直接与物流沟通。商家需在收到破损反馈后48小时内给出补发或退款方案。易碎品建议商家使用加固包装。"
+      },
+      {
+        "heading": "赔偿标准",
+        "body": "运输导致的商品完全损坏：全额退款或补发同款。部分损坏但不影响使用：协商部分退款，金额为商品价值的10%-50%。因运输损坏导致的退货，运费由商家承担。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "ivan",
+    "rawText": "收到的快递箱子被压坏了，里面的东西也碎了怎么办",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "破损",
+    "mustContainSourceUri": "https://docs.example.com/shipping-damage-policy"
+  }
+}

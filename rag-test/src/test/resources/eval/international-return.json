@@ -1,0 +1,37 @@
+{
+  "_comment": "国际订单退货运费规则",
+  "kbId": "kb-international-return",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/international-return-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-international-return",
+    "kbId": "kb-international-return",
+    "documentId": "kb-international-return/doc-international-return-v1",
+    "title": "国际订单退货规则",
+    "sections": [
+      {
+        "heading": "国际退货运费",
+        "body": "国际订单退货的运费由买家承担，无论退货原因。运费为实际发生费用，不设上限。建议买家在购买时购买国际退货险，可覆盖最高100元的返程运费。"
+      },
+      {
+        "heading": "国际退货时限",
+        "body": "国际订单支持签收后15日内申请退货，较国内订单延长。买家需在申请后7日内将商品寄出，寄出后需上传国际转运单号。退货商品需保留原包装及标签。"
+      },
+      {
+        "heading": "税费说明",
+        "body": "国际订单退货时，已缴纳的进口关税和增值税不予退还。若因商家原因导致的退货（发错货、质量问题），商家可协助申请部分税费退还，具体以海关审核为准。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "eve",
+    "rawText": "我在海外下单买的东西质量有问题要退货，运费谁出",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "国际订单退货的运费由买家承担",
+    "mustContainSourceUri": "https://docs.example.com/international-return-policy"
+  }
+}

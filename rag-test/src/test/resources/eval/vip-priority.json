@@ -1,0 +1,37 @@
+{
+  "_comment": "VIP会员专属售后通道",
+  "kbId": "kb-vip-priority",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/vip-priority-policy",
+  "permissionTags": ["ROLE_USER", "ROLE_VIP"],
+  "document": {
+    "tenantId": "tenant-vip-priority",
+    "kbId": "kb-vip-priority",
+    "documentId": "kb-vip-priority/doc-vip-priority-v1",
+    "title": "VIP会员售后服务",
+    "sections": [
+      {
+        "heading": "VIP专属通道",
+        "body": "VIP会员享有专属售后客服通道，无需排队等待。VIP会员的售后申请在1小时内响应，普通用户为24小时内。VIP会员享受优先处理权，退款审核在2小时内完成。"
+      },
+      {
+        "heading": "VIP专属权益",
+        "body": "VIP会员每年享有3次免费上门取件退货服务，不限金额。退货免审核额度提升至5000元/单。VIP会员退货期限延长至30天（普通用户7天）。"
+      },
+      {
+        "heading": "VIP等级说明",
+        "body": "VIP会员分为黄金、铂金、钻石三档。黄金会员年消费满5000元，铂金满20000元，钻石满50000元。等级越高，免费取件次数和免审核额度越高。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "julia",
+    "rawText": "我是VIP会员，退货流程和普通用户有什么不同",
+    "permissionTags": ["ROLE_USER", "ROLE_VIP"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "VIP会员",
+    "mustContainSourceUri": "https://docs.example.com/vip-priority-policy"
+  }
+}

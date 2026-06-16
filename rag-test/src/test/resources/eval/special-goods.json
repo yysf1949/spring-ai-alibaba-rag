@@ -1,0 +1,33 @@
+{
+  "_comment": "虚拟商品/定制商品不退货",
+  "kbId": "kb-special-goods",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/special-goods-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-special-goods",
+    "kbId": "kb-special-goods",
+    "documentId": "kb-special-goods/doc-special-goods-v1",
+    "title": "特殊商品退换货规则",
+    "sections": [
+      {
+        "heading": "不适用七天退货的商品",
+        "body": "以下商品不适用7天无理由退货：虚拟商品（数字卡券、会员订阅、网络课程）、定制商品（刻字、定制尺寸、定制图案）、生鲜食品（水果、生肉、鲜花）、个人卫生用品（内衣裤、泳装、口罩）。"
+      },
+      {
+        "heading": "例外情况",
+        "body": "特殊商品因质量问题或发错货的，仍可申请退换货。买家需提供图片或视频证据，平台审核通过后由商家承担运费。虚拟商品一经激活或使用，即使有质量问题也仅支持退款不退原商品。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "dave",
+    "rawText": "我买的定制刻字杯子不想要了，可以退货吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "定制商品",
+    "mustContainSourceUri": "https://docs.example.com/special-goods-policy"
+  }
+}

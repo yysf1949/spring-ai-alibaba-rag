@@ -1,0 +1,37 @@
+{
+  "_comment": "换货流程与运费",
+  "kbId": "kb-exchange-policy",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/exchange-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-exchange-policy",
+    "kbId": "kb-exchange-policy",
+    "documentId": "kb-exchange-policy/doc-exchange-policy-v1",
+    "title": "换货政策",
+    "sections": [
+      {
+        "heading": "换货条件",
+        "body": "商品在签收后7日内，如出现尺码不合适、颜色偏好或质量问题，可申请同款换货。换货仅限同款同价商品，不支持跨款式或跨价格换货。"
+      },
+      {
+        "heading": "换货运费",
+        "body": "因个人原因换货的，往返运费由买家承担；因质量问题的换货，往返运费由商家承担。建议买家先垫付运费，商家收到退货后按实际金额报销。运费险不覆盖换货场景。"
+      },
+      {
+        "heading": "换货流程",
+        "body": "第1步：在订单页面选择「申请换货」并填写换货原因。第2步：将商品寄回商家指定地址，上传运单号。第3步：商家验收后24小时内发出换货商品。换货商品同样享受7天退货保障。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "grace",
+    "rawText": "买的鞋子尺码小了想换大一码，运费谁出",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "往返运费由买家承担",
+    "mustContainSourceUri": "https://docs.example.com/exchange-policy"
+  }
+}

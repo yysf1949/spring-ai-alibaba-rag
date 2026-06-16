@@ -1,0 +1,37 @@
+{
+  "_comment": "部分退款场景（赠品未退回）",
+  "kbId": "kb-partial-refund",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/partial-refund-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-partial-refund",
+    "kbId": "kb-partial-refund",
+    "documentId": "kb-partial-refund/doc-partial-refund-v1",
+    "title": "部分退款规则",
+    "sections": [
+      {
+        "heading": "赠品未退回的处理",
+        "body": "主商品退货时，赠品需一并退回。若赠品未退回或已使用，将从退款中扣除赠品价值。赠品价值以商品详情页标注为准，未标注的由客服评估确定。"
+      },
+      {
+        "heading": "部分商品退货",
+        "body": "一个订单包含多件商品时，可申请仅退其中部分商品。未退回部分商品按原价计算。套装商品原则上不支持部分退货，需整单退回。"
+      },
+      {
+        "heading": "退款金额计算",
+        "body": "部分退款金额 = （商品实付金额 ÷ 订单总实付金额） × 订单实付总金额 - 赠品扣款 - 运费分摊。退款到账时间通常在审核通过后1-3个工作日。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "frank",
+    "rawText": "我退货忘了把赠品放回去了，退款会受影响吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "扣除",
+    "mustContainSourceUri": "https://docs.example.com/partial-refund-policy"
+  }
+}

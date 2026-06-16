@@ -1,0 +1,33 @@
+{
+  "_comment": "超过7天退货期限怎么办",
+  "kbId": "kb-return-period",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/return-period-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-return-period",
+    "kbId": "kb-return-period",
+    "documentId": "kb-return-period/doc-return-period-v1",
+    "title": "退货期限说明",
+    "sections": [
+      {
+        "heading": "七天退货期限",
+        "body": "除特殊商品外，自签收之日起7日内可申请无理由退货。退货商品需保持完好（包装未拆封、配件齐全、不影响二次销售）。超过7日但未满15日的，仅因质量问题可申请退货。"
+      },
+      {
+        "heading": "超过15天",
+        "body": "超过15天的订单原则上不再支持退货，仅提供保修或维修服务。保修期内质量问题可联系售后维修，运费由商家承担。非质量问题维修需自行承担运费及维修费用。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "charlie",
+    "rawText": "我的鞋子买了10天了，有点质量问题还能退吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "质量问题",
+    "mustContainSourceUri": "https://docs.example.com/return-period-policy"
+  }
+}

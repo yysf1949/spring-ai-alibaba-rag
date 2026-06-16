@@ -1,0 +1,37 @@
+{
+  "_comment": "团购订单退货限制",
+  "kbId": "kb-group-buy-return",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/group-buy-return-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-group-buy-return",
+    "kbId": "kb-group-buy-return",
+    "documentId": "kb-group-buy-return/doc-group-buy-return-v1",
+    "title": "团购订单退货规则",
+    "sections": [
+      {
+        "heading": "团购退货限制",
+        "body": "团购订单的退货规则与普通订单不同。团购商品在成团前可随时取消订单全额退款。成团发货后，团购商品仅支持因质量问题退货，不支持无理由退货。"
+      },
+      {
+        "heading": "部分人退货",
+        "body": "同一团购订单中，部分参与者退货不影响其他成员的团购资格。退货仅影响退货者个人的订单金额，团购优惠价不受影响。退货后若团购人数低于成团门槛，剩余订单将按原价计算。"
+      },
+      {
+        "heading": "团购运费",
+        "body": "团购商品包邮，退货时若为质量问题，运费由商家承担。非质量问题退货不支持。若团购未成团自动取消，全额退款且无需支付运费。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "kevin",
+    "rawText": "参加了一个团购，收到货后不太满意能退货吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "不支持无理由退货",
+    "mustContainSourceUri": "https://docs.example.com/group-buy-return-policy"
+  }
+}

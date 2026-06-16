@@ -1,0 +1,37 @@
+{
+  "_comment": "保修期内质量问题",
+  "kbId": "kb-warranty-claim",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/warranty-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-warranty-claim",
+    "kbId": "kb-warranty-claim",
+    "documentId": "kb-warranty-claim/doc-warranty-claim-v1",
+    "title": "保修规则",
+    "sections": [
+      {
+        "heading": "保修期限",
+        "body": "电子产品整机保修1年，主要部件（主板、屏幕、电池）保修2年。家电类产品整机保修3年，压缩机保修5年。日用百货类保修3个月。保修期自签收之日起计算。"
+      },
+      {
+        "heading": "保修范围",
+        "body": "保修涵盖非人为损坏的质量缺陷，包括：元器件故障、制造缺陷、性能不达标。以下情况不在保修范围：人为损坏、进水、摔落、私自拆修、不可抗力造成的损坏。"
+      },
+      {
+        "heading": "保修流程",
+        "body": "第1步：联系售后客服提交故障描述及照片。第2步：客服审核后提供寄修地址。第3步：将商品寄回，运费由商家承担。维修周期一般为7-15个工作日。维修后同一故障保修期延长30天。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "heidi",
+    "rawText": "我买的手机用了半年屏幕坏了，保修期内怎么处理",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "保修",
+    "mustContainSourceUri": "https://docs.example.com/warranty-policy"
+  }
+}
