@@ -94,6 +94,15 @@ public class RagExceptionHandler {
                 "Embedding service is currently unavailable. Please retry."));
     }
 
+    @ExceptionHandler(IngestController.IngestJobNotFoundException.class)
+    public org.springframework.http.ResponseEntity<ProblemDetail> ingestJobNotFound(
+            IngestController.IngestJobNotFoundException ex) {
+        log.info("Ingest job not found: {}", ex.getMessage());
+        return withRetryAfter(problem(HttpStatus.NOT_FOUND,
+                "ingest-job-not-found",
+                ex.getMessage()));
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ProblemDetail unexpected(RuntimeException ex) {
         log.error("Unhandled exception in QA controller", ex);
