@@ -1,0 +1,35 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+.factorypath
+
+# Build
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+application-local.yml
+
+# Maven
+.m2/
+
+# Test reports
+target/surefire-reports/
