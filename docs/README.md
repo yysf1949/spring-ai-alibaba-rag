@@ -18,8 +18,8 @@
 rag-core/         — domain model + ports (no Spring, no Redis, no LLM)
 rag-redis/        — Redis Stack vector store + 3-tier cache
 rag-pipeline/     — orchestrators (IngestService, QAService, ContextAssembler, Rewrite)
-rag-embedding/    — DashScope embedding gateway (SPEC §13.5) — *not yet implemented*
-rag-app/          — Spring Boot wiring (HTTP, config, beans) — *not yet implemented*
+rag-embedding/    — Stub adapters (EmbeddingGateway / RerankService / LlmService) — real DashScope adapter ⛔ blocked on API key
+rag-app/          — Spring Boot wiring (HTTP, MDC, OpenAPI 3, RFC 7807 errors, e2e test)
 ```
 
 ## Pipeline status (live)
@@ -36,8 +36,11 @@ rag-app/          — Spring Boot wiring (HTTP, config, beans) — *not yet impl
 | 5-P3-A. ContextAssembler (token budget + PII) | ✅ shipped | `632719a` |
 | 5-P3-B. RuleBasedQueryRewriter | ✅ shipped | `453c005` |
 | 5-P3-C. QAService (8-step chain + 7-tier degradation) | ✅ shipped | `51ede3a` |
-| 5-P3-D. Operational docs (this folder) | 🔜 this commit | — |
-| 5-P4. DashScope: EmbeddingGateway / RerankService / LlmService | ⛔ blocked on API key | — |
-| 6. rag-app (Spring Boot wiring, HTTP, observability) | ⏳ after 5-P4 | — |
+| 5-P3-D. Operational docs (this folder) | ✅ shipped | `8bd9104` |
+| 6-D1. rag-app Spring Boot skeleton + REST `POST /api/qa` + MDC + stub beans | ✅ shipped | `5c128aa` |
+| 6-D2+D6. OpenAPI 3 + RFC 7807 problem+json errors | ✅ shipped | `f1b2873` |
+| 6-D5. Refactor: move Embedding/Rerank/LLM stubs out of rag-app → rag-embedding | ✅ shipped | `4898b34` |
+| 6-D4. Redis-backed end-to-end test + RedisAutoConfiguration | ✅ shipped | `38628cf` |
+| 5-P4. DashScope real adapters (EmbeddingGateway / RerankService / LlmService) | ⛔ blocked on API key | — |
 
-**Test count**: 124 unit tests, all green (`mvn verify`). 23 redis-stack smoke tests skipped when Redis Stack is unavailable (see RUNBOOK.md).
+**Test count**: 147 tests, all green (`mvn verify`) — 124 pipeline + 9 embedding stub + 6 redis-core + 8 rag-app controller. 23 Redis Stack smoke tests + 1 IT skipped when Redis Stack is unavailable (see RUNBOOK.md).
