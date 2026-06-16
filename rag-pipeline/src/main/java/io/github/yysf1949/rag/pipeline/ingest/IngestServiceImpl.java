@@ -12,16 +12,19 @@ import io.github.yysf1949.rag.core.port.IngestJobRepository;
 import io.github.yysf1949.rag.core.port.IngestService;
 import io.github.yysf1949.rag.core.port.VectorStore;
 import io.github.yysf1949.rag.pipeline.splitter.ChunkSplitter;
+import io.github.yysf1949.rag.pipeline.logging.PipelineMdc;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -129,29 +132,58 @@ public class IngestServiceImpl implements IngestService {
     public IngestJob ingestSync(Document document) {
         IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId());
         jobRepository.save(job);
-        long t0 = System.nanoTime();
-        IngestJob result = runPipeline(document, job);
-        Timer.builder("rag.ingest.duration.ms")
-                .tag("tenant", document.tenantId())
-                .register(meterRegistry)
-                .record(Duration.ofNanos(System.nanoTime() - t0).toMillis(), TimeUnit.MILLISECONDS);
-        return result;
+        // Pin jobId on MDC for the entire sync run (cleared in finally).
+        PipelineMdc.put(PipelineMdc.KEY_JOB_ID, job.jobId());
+        try {
+            long t0 = System.nanoTime();
+            IngestJob result = runPipeline(document, job);
+            Timer.builder("rag.ingest.duration.ms")
+                    .tag("tenant", document.tenantId())
+                    .register(meterRegistry)
+                    .record(Duration.ofNanos(System.nanoTime() - t0).toMillis(), TimeUnit.MILLISECONDS);
+            return result;
+        } finally {
+            MDC.remove(PipelineMdc.KEY_JOB_ID);
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
     }
 
     @Override
     public IngestJob ingestAsync(Document document) {
         IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId());
         jobRepository.save(job);
+        // MDC is thread-local — the executor thread does NOT inherit the
+        // HTTP-thread MDC (tenant / requestId). Snapshot now so the
+        // background run can re-install it. Without this, async log lines
+        // lose correlation with the originating HTTP request — a real
+        // ops headache when you're staring at a jobId trying to find its
+        // request trace.
+        Map<String, String> httpContext = PipelineMdc.snapshot();
+        PipelineMdc.put(PipelineMdc.KEY_JOB_ID, job.jobId());
+        Map<String, String> submittedContext = PipelineMdc.snapshot();
+        MDC.remove(PipelineMdc.KEY_JOB_ID);  // restored inside the lambda
+
         asyncExecutor.submit(() -> {
+            // Restore HTTP-thread MDC inside the worker thread, then add
+            // the jobId. Always release on exit so the executor thread is
+            // clean for the next submission.
+            PipelineMdc.restore(submittedContext);
             try {
                 runPipeline(document, job);
             } catch (Throwable t) {
                 // Defensive: the pipeline already catches everything per spec
                 // §10, but if a bug leaks out, never let the executor's
                 // UncaughtExceptionHandler kill the daemon.
-                log.error("async ingest task crashed for jobId={}", job.jobId(), t);
+                log.error("async ingest task crashed for jobId={} (originating httpContext={})",
+                        job.jobId(), httpContext, t);
                 jobRepository.save(job.withStatus(IngestJobStatus.FAILED)
                         .withError("uncaught: " + t.getMessage()));
+            } finally {
+                MDC.remove(PipelineMdc.KEY_JOB_ID);
+                MDC.remove(PipelineMdc.KEY_STAGE);
+                // Hand the executor thread back to its pool with NO MDC,
+                // not whatever the previous job left behind.
+                MDC.clear();
             }
         });
         return job;
@@ -170,26 +202,33 @@ public class IngestServiceImpl implements IngestService {
             throw new IllegalStateException(
                     "publish requires status READY, got " + job.status() + " for job " + jobId);
         }
-        long kbVersion = parseKbVersion(job);
-        IngestJob result;
+        PipelineMdc.put(PipelineMdc.KEY_JOB_ID, jobId);
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "publish");
         try {
-            vectorStore.publish(job.tenantId(),
-                    // kbId is the first segment of documentId-encoded info, but
-                    // Document doesn't carry a separate kbId; we encode it in
-                    // documentId as "kbId/docId". Reconstruct on the way out.
-                    extractKbId(job.documentId()),
-                    kbVersion);
-            IngestJob published = job.withStatus(IngestJobStatus.PUBLISHED);
-            jobRepository.save(published);
-            result = published;
-        } catch (VectorStoreUnavailableException ex) {
-            IngestJob failed = job.withStatus(IngestJobStatus.FAILED)
-                    .withError("publish failed: " + ex.getMessage());
-            jobRepository.save(failed);
-            result = failed;
+            long kbVersion = parseKbVersion(job);
+            IngestJob result;
+            try {
+                vectorStore.publish(job.tenantId(),
+                        // kbId is the first segment of documentId-encoded info, but
+                        // Document doesn't carry a separate kbId; we encode it in
+                        // documentId as "kbId/docId". Reconstruct on the way out.
+                        extractKbId(job.documentId()),
+                        kbVersion);
+                IngestJob published = job.withStatus(IngestJobStatus.PUBLISHED);
+                jobRepository.save(published);
+                result = published;
+            } catch (VectorStoreUnavailableException ex) {
+                IngestJob failed = job.withStatus(IngestJobStatus.FAILED)
+                        .withError("publish failed: " + ex.getMessage());
+                jobRepository.save(failed);
+                result = failed;
+            }
+            recordJobTerminal(result.tenantId(), result.status().name());
+            return result;
+        } finally {
+            MDC.remove(PipelineMdc.KEY_JOB_ID);
+            MDC.remove(PipelineMdc.KEY_STAGE);
         }
-        recordJobTerminal(result.tenantId(), result.status().name());
-        return result;
     }
 
     // ─── pipeline core ─────────────────────────────────────────────────────
@@ -214,108 +253,125 @@ public class IngestServiceImpl implements IngestService {
 
         // Step 1: split
         List<Chunk> chunks;
+        IngestJob counted = processing;  // upgraded after split count is known
         try {
-            chunks = splitter.split(doc);
-        } catch (Exception e) {
-            log.error("splitter failed for jobId={} docId={}", job.jobId(), doc.documentId(), e);
-            IngestJob failed = processing.withStatus(IngestJobStatus.FAILED)
-                    .withError("splitter: " + e.getMessage());
-            jobRepository.save(failed);
-            recordJobTerminal(failed.tenantId(), "FAILED");
-            return failed;
-        }
-        if (chunks.size() > MAX_CHUNKS_PER_DOCUMENT) {
-            String msg = "chunk count " + chunks.size()
-                    + " exceeds per-document cap " + MAX_CHUNKS_PER_DOCUMENT
-                    + " (spec §10) — split the source document first";
-            log.warn("rejecting jobId={} docId={} : {}", job.jobId(), doc.documentId(), msg);
-            IngestJob failed = processing.withStatus(IngestJobStatus.FAILED).withError(msg);
-            jobRepository.save(failed);
-            recordJobTerminal(failed.tenantId(), "FAILED");
-            return failed;
-        }
-        IngestJob counted = processing.withTotalChunks(chunks.size());
-        jobRepository.save(counted);
-        if (chunks.isEmpty()) {
-            // Empty document — nothing to do, mark READY and let the
-            // operator decide whether to publish the empty kbVersion.
-            IngestJob ready = counted.withStatus(IngestJobStatus.READY);
-            jobRepository.save(ready);
-            return ready;
+            PipelineMdc.put(PipelineMdc.KEY_STAGE, "split");
+            try {
+                chunks = splitter.split(doc);
+            } catch (Exception e) {
+                log.error("splitter failed for jobId={} docId={}", job.jobId(), doc.documentId(), e);
+                IngestJob failed = processing.withStatus(IngestJobStatus.FAILED)
+                        .withError("splitter: " + e.getMessage());
+                jobRepository.save(failed);
+                recordJobTerminal(failed.tenantId(), "FAILED");
+                return failed;
+            }
+            if (chunks.size() > MAX_CHUNKS_PER_DOCUMENT) {
+                String msg = "chunk count " + chunks.size()
+                        + " exceeds per-document cap " + MAX_CHUNKS_PER_DOCUMENT
+                        + " (spec §10) — split the source document first";
+                log.warn("rejecting jobId={} docId={} : {}", job.jobId(), doc.documentId(), msg);
+                IngestJob failed = processing.withStatus(IngestJobStatus.FAILED).withError(msg);
+                jobRepository.save(failed);
+                recordJobTerminal(failed.tenantId(), "FAILED");
+                return failed;
+            }
+            counted = processing.withTotalChunks(chunks.size());
+            jobRepository.save(counted);
+            if (chunks.isEmpty()) {
+                // Empty document — nothing to do, mark READY and let the
+                // operator decide whether to publish the empty kbVersion.
+                IngestJob ready = counted.withStatus(IngestJobStatus.READY);
+                jobRepository.save(ready);
+                return ready;
+            }
+        } finally {
+            MDC.remove(PipelineMdc.KEY_STAGE);
         }
 
         // Step 2: embed (batched). On total failure, mark FAILED. Partial
         // failure is impossible by the EmbeddingGateway contract — the
         // impl either returns N vectors or throws.
         List<float[]> vectors;
+        IngestJob embedded = counted;
         try {
-            vectors = embedInBatches(chunks);
-        } catch (EmbeddingUnavailableException eue) {
-            log.error("embedding unavailable for jobId={} : {}", job.jobId(), eue.getMessage());
-            IngestJob failed = counted.withStatus(IngestJobStatus.FAILED)
-                    .withError("embedding: " + eue.getMessage());
-            jobRepository.save(failed);
-            recordJobTerminal(failed.tenantId(), "FAILED");
-            return failed;
+            PipelineMdc.put(PipelineMdc.KEY_STAGE, "embed");
+            try {
+                vectors = embedInBatches(chunks);
+            } catch (EmbeddingUnavailableException eue) {
+                log.error("embedding unavailable for jobId={} : {}", job.jobId(), eue.getMessage());
+                IngestJob failed = counted.withStatus(IngestJobStatus.FAILED)
+                        .withError("embedding: " + eue.getMessage());
+                jobRepository.save(failed);
+                recordJobTerminal(failed.tenantId(), "FAILED");
+                return failed;
+            }
+            if (vectors.size() != chunks.size()) {
+                String msg = "embedding gateway returned " + vectors.size()
+                        + " vectors for " + chunks.size() + " chunks";
+                IngestJob failed = counted.withStatus(IngestJobStatus.FAILED).withError(msg);
+                jobRepository.save(failed);
+                recordJobTerminal(failed.tenantId(), "FAILED");
+                return failed;
+            }
+            embedded = counted.withEmbeddedChunks(chunks.size());
+            jobRepository.save(embedded);
+        } finally {
+            MDC.remove(PipelineMdc.KEY_STAGE);
         }
-        if (vectors.size() != chunks.size()) {
-            String msg = "embedding gateway returned " + vectors.size()
-                    + " vectors for " + chunks.size() + " chunks";
-            IngestJob failed = counted.withStatus(IngestJobStatus.FAILED).withError(msg);
-            jobRepository.save(failed);
-            recordJobTerminal(failed.tenantId(), "FAILED");
-            return failed;
-        }
-        IngestJob embedded = counted.withEmbeddedChunks(chunks.size());
-        jobRepository.save(embedded);
 
         // Step 3: attach vectors + upsert in one batch
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "upsert");
         List<Chunk> finalChunks = new ArrayList<>(chunks.size());
         int skipCount = 0;
-        for (int i = 0; i < chunks.size(); i++) {
-            Chunk c = chunks.get(i);
-            float[] v = vectors.get(i);
-            if (v == null || v.length != embeddingGateway.dimension()) {
-                // Spec §10: a single chunk's failure does not block the doc.
-                skipCount++;
-                log.warn("jobId={} chunk {} ({}) dropped: null or dim-mismatched vector",
-                        job.jobId(), c.chunkId(), c.sectionPath());
-                continue;
-            }
-            finalChunks.add(rebuildWithEmbedding(c, v));
-        }
-        if (finalChunks.isEmpty()) {
-            IngestJob failed = embedded.withStatus(IngestJobStatus.FAILED)
-                    .withError("all chunks produced invalid vectors");
-            jobRepository.save(failed);
-            recordJobTerminal(failed.tenantId(), "FAILED");
-            return failed;
-        }
-        int written;
         try {
-            written = vectorStore.upsert(finalChunks);
-        } catch (VectorStoreUnavailableException vsue) {
-            log.error("vector store unavailable for jobId={} : {}", job.jobId(), vsue.getMessage());
-            IngestJob failed = embedded.withStatus(IngestJobStatus.FAILED)
-                    .withError("vectorStore: " + vsue.getMessage());
-            jobRepository.save(failed);
-            recordJobTerminal(failed.tenantId(), "FAILED");
-            return failed;
+            for (int i = 0; i < chunks.size(); i++) {
+                Chunk c = chunks.get(i);
+                float[] v = vectors.get(i);
+                if (v == null || v.length != embeddingGateway.dimension()) {
+                    // Spec §10: a single chunk's failure does not block the doc.
+                    skipCount++;
+                    log.warn("jobId={} chunk {} ({}) dropped: null or dim-mismatched vector",
+                            job.jobId(), c.chunkId(), c.sectionPath());
+                    continue;
+                }
+                finalChunks.add(rebuildWithEmbedding(c, v));
+            }
+            if (finalChunks.isEmpty()) {
+                IngestJob failed = embedded.withStatus(IngestJobStatus.FAILED)
+                        .withError("all chunks produced invalid vectors");
+                jobRepository.save(failed);
+                recordJobTerminal(failed.tenantId(), "FAILED");
+                return failed;
+            }
+            int written;
+            try {
+                written = vectorStore.upsert(finalChunks);
+            } catch (VectorStoreUnavailableException vsue) {
+                log.error("vector store unavailable for jobId={} : {}", job.jobId(), vsue.getMessage());
+                IngestJob failed = embedded.withStatus(IngestJobStatus.FAILED)
+                        .withError("vectorStore: " + vsue.getMessage());
+                jobRepository.save(failed);
+                recordJobTerminal(failed.tenantId(), "FAILED");
+                return failed;
+            }
+            int failed_ = finalChunks.size() - written;
+            IngestJob ready = embedded
+                    .withUpsertedChunks(written)
+                    .withFailedChunks(skipCount + failed_)
+                    .withStatus(IngestJobStatus.READY);
+            jobRepository.save(ready);
+            recordJobTerminal(ready.tenantId(), "READY");
+            Counter.builder("rag.ingest.chunks.total")
+                    .tag("tenant", doc.tenantId())
+                    .register(meterRegistry)
+                    .increment(written);
+            log.info("jobId={} docId={} staged: {} written, {} skipped (bad vec), {} rejected (store)",
+                    job.jobId(), doc.documentId(), written, skipCount, failed_);
+            return ready;
+        } finally {
+            MDC.remove(PipelineMdc.KEY_STAGE);
         }
-        int failed_ = finalChunks.size() - written;
-        IngestJob ready = embedded
-                .withUpsertedChunks(written)
-                .withFailedChunks(skipCount + failed_)
-                .withStatus(IngestJobStatus.READY);
-        jobRepository.save(ready);
-        recordJobTerminal(ready.tenantId(), "READY");
-        Counter.builder("rag.ingest.chunks.total")
-                .tag("tenant", doc.tenantId())
-                .register(meterRegistry)
-                .increment(written);
-        log.info("jobId={} docId={} staged: {} written, {} skipped (bad vec), {} rejected (store)",
-                job.jobId(), doc.documentId(), written, skipCount, failed_);
-        return ready;
     }
 
     private List<float[]> embedInBatches(List<Chunk> chunks) {

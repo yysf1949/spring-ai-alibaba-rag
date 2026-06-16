@@ -1056,6 +1056,146 @@ The compose file does (2) so the `app` service can point at
 
 ---
 
+## 13. Phase 7 Cluster 5 lessons — MDC stage instrumentation
+
+Cluster 5 wired `stage` + `queryHash` + `jobId` MDC keys through every
+step of QAServiceImpl + IngestServiceImpl and produced a `logback-spring.xml`
+that renders them in the log line. Five patterns hit that should have
+been obvious in hindsight:
+
+### 13.1 MDC is thread-local — async executors lose the HTTP-thread context
+
+This was the single most useful find of the cluster. The `IngestServiceImpl`
+async path submits work to a daemon `ExecutorService`. The worker thread
+**does not inherit the HTTP-thread MDC** — `tenant` and `requestId`
+become empty on every async log line, so async errors are practically
+ungreppable.
+
+**Fix** — snapshot the HTTP-thread MDC just before `asyncExecutor.submit()`,
+re-install it inside the `Runnable` body, and `MDC.clear()` in the
+finally block (so the next job on this thread doesn't see the previous
+job's keys):
+
+```java
+Map<String, String> submittedContext = PipelineMdc.snapshot();
+asyncExecutor.submit(() -> {
+    PipelineMdc.restore(submittedContext);
+    try {
+        runPipeline(document, job);
+    } finally {
+        MDC.clear();  // ← not "remove" — clear EVERYTHING
+    }
+});
+```
+
+**The gotcha**: at the HTTP boundary the filter sets `tenant` + `requestId`.
+Between `submit()` and the worker running, those keys are gone. The worker
+runs with an empty MDC unless you re-install. **Without this, the entire
+`%X{tenant}` rendering in your logback pattern is wrong for async work.**
+
+### 13.2 One outer `try/finally` is safer than `MDC.remove` inside every `try`
+
+The QAServiceImpl `answer()` method has 8 stage `try/finally` blocks
+plus early-return paths (cache HIT, empty retrieval, exception in LLM).
+Trying to keep the MDC clean by putting `MDC.remove(stage)` at the
+bottom of each `finally` looks right but is fragile — a future refactor
+that adds a 9th stage will forget the remove, and MDC leaks across
+requests on the same thread.
+
+**Fix** — split the method into two:
+
+```java
+public Answer answer(Query query) {
+    PipelineMdc.put(KEY_QUERY_HASH, hashQuery(query.rawText()));
+    try {
+        return answerInternal(query, ...);  // 8-stage chain lives here
+    } finally {
+        MDC.remove(KEY_QUERY_HASH);
+        MDC.remove(KEY_STAGE);  // belt + suspenders
+    }
+}
+```
+
+The outer method owns the per-request MDC; the inner method owns the
+per-stage MDC. There's exactly one place to add a new request-scoped
+key (the outer method) and exactly one place to add a new stage-scoped
+key (each inner `try`).
+
+### 13.3 `lenient()` for stubs used only on some branches of a Mockito test
+
+Mockito's strict-stubs default (`@ExtendWith(MockitoExtension.class)`)
+fails the test if you stub a method that the SUT didn't call. With
+publish + retry + embedding-fallback branches in a single test, that's
+painful: you stub `embedBatch`, `dimension`, `upsert` — but if the
+test happens to take the embed-failure path, only `embedBatch` gets
+called, and Mockito screams about the other two.
+
+**Fix** — wrap conditional stubs with `lenient()`:
+
+```java
+@BeforeEach void setUp() {
+    // Strict stubs here would fail the test when the embed-failure
+    // path doesn't exercise dimension()/upsert().
+    lenient().when(embeddingGateway.dimension()).thenReturn(DIM);
+    lenient().when(embeddingGateway.embedBatch(any())).thenReturn(zeros(n));
+    lenient().when(vectorStore.upsert(any())).thenReturn(n);
+}
+```
+
+The alternative — moving the stubs into the test bodies that exercise
+each branch — is cleaner in theory but quadruples the code in tests
+that already have 6 cases.
+
+### 13.4 Default-value trick: `%X{stage:-}` keeps the field present even when empty
+
+```xml
+<property name="LOG_PATTERN_CONSOLE"
+          value="%d{HH:mm:ss} %5p [%X{tenant:-none}] [%X{requestId:-none}] [%X{jobId:-}] [%X{queryHash:-}] [stage=%X{stage:-}] %logger : %m%n%xException"/>
+```
+
+`%X{stage:-}` renders the MDC value, OR the literal string `-` if
+absent. Without the default, log lines OUTSIDE a request (boot, scheduler,
+healthcheck) render as `[stage=]`. **Same shape as in-request lines —
+makes regex `\[stage=(\w+)\]` work uniformly.** Without the default,
+you'd have `\[stage=([\w]+|)\]` or `stage=\s*` patterns that break
+constantly.
+
+### 13.5 Logback `%wEx` is recognized by 1.5.x but not in the bundled Spring Boot pattern parser
+
+Symptom — adding `%wEx` (the "wrapped exception" format that
+includes class info) to the pattern crashes Spring Boot at startup
+with `Logback configuration error detected: There is no conversion
+class registered for conversion word [wEx]`. The pattern parser in
+`LogbackLoggingSystem.loadConfiguration()` (Spring Boot 3.3.5) reports
+the word as unknown even though Logback 1.5.11 lists `%wEx` in the
+docs.
+
+**Fix** — use `%xException` instead. It's always available, prints
+the full stack trace with `Caused by:` chains, and Spring Boot's
+parser never complains.
+
+### 13.6 Live verification: tail the log while curling, not just compile + tests
+
+The MDC plumbing has zero observable effect on the JVM or the HTTP
+response — neither compile-time nor runtime tests can say "yes, the
+log line now includes `[tenant=acme] [stage=embed]`". You have to
+look at the actual log file. The cheapest verification is:
+
+```bash
+curl -H "X-Tenant-Id: acme" -H "X-Request-Id: r-1" -X POST \
+     http://localhost:18081/api/qa -d '...'
+sleep 1
+grep '\[acme\] \[r-1\]' /tmp/rag-app.log
+```
+
+If grep returns one or more lines with `[acme]` and `[r-1]`, the MDC
+is plumbed end-to-end. If it returns nothing, either the filter isn't
+registered or the pattern token is misspelled (typo in `%X{tenant:-none}`
+vs `%X{tennat:-none}` renders as literal "none", same as a missing key —
+silent failure).
+
+---
+
 ## Appendix: Common dotenv pitfalls
 
 | Anti-pattern | Why it's bad | Correct |

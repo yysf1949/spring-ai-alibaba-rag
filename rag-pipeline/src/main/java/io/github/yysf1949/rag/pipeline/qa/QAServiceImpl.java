@@ -21,12 +21,14 @@ import io.github.yysf1949.rag.core.port.RewriteService.RewriteResult;
 import io.github.yysf1949.rag.core.port.VectorStore;
 import io.github.yysf1949.rag.pipeline.context.ContextAssembler;
 import io.github.yysf1949.rag.pipeline.context.ContextAssembler.AssembledPrompt;
+import io.github.yysf1949.rag.pipeline.logging.PipelineMdc;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -152,19 +154,54 @@ public class QAServiceImpl implements QAService {
         // Counter.builder.register — caching the Timer per stage avoids a
         // hash lookup on every answer() call).
         Map<String, Timer> stageTimers = buildStageTimers(query.tenantId());
+        // Pin queryHash on the MDC for the WHOLE request — every log line
+        // emitted during answer() now carries it. Cleared at the end via the
+        // outer try/finally.
+        PipelineMdc.put(PipelineMdc.KEY_QUERY_HASH, hashQuery(query.rawText()));
 
+        try {
+            return answerInternal(query, t0, stamps, stageTimers);
+        } finally {
+            // Spec §9.2: every per-request MDC key we own must be cleared
+            // before the response returns, so the next request on this
+            // thread starts with a clean slate.
+            MDC.remove(PipelineMdc.KEY_QUERY_HASH);
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
+    }
+
+    /**
+     * The 8-step chain. Split out from {@link #answer} so the outer MDC
+     * cleanup (queryHash) wraps every return / exception path with a
+     * single try/finally — see spec §9.2.
+     */
+    private Answer answerInternal(Query query, long t0, long[] stamps,
+                                  Map<String, Timer> stageTimers) {
         // Step 1: rewrite
-        RewriteResult rewritten = rewrite(query);
-        stamps[0] = System.currentTimeMillis() - t0;
-        stageTimers.get("rewrite").record(stamps[0], TimeUnit.MILLISECONDS);
+        RewriteResult rewritten;
+        try {
+            PipelineMdc.put(PipelineMdc.KEY_STAGE, "rewrite");
+            rewritten = rewrite(query);
+        } finally {
+            stamps[0] = System.currentTimeMillis() - t0;
+            stageTimers.get("rewrite").record(stamps[0], TimeUnit.MILLISECONDS);
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
 
         // Step 2: cache check (uses rewritten text + tenant — NOT raw text,
         // because two raw queries that rewrite to the same thing should share
         // a cached answer)
         String queryHash = hashQuery(rewritten.rewritten());
-        stamps[1] = System.currentTimeMillis() - t0 - stamps[0];
-        stageTimers.get("cacheCheck").record(stamps[1], TimeUnit.MILLISECONDS);
-        Optional<Answer> hit = checkCache(query, queryHash);
+        long cacheCheckStart = System.currentTimeMillis();
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "cacheCheck");
+        Optional<Answer> hit;
+        try {
+            hit = checkCache(query, queryHash);
+        } finally {
+            stamps[1] = System.currentTimeMillis() - cacheCheckStart;
+            stageTimers.get("cacheCheck").record(stamps[1], TimeUnit.MILLISECONDS);
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
         if (hit.isPresent()) {
             Answer a = hit.get();
             long latency = System.currentTimeMillis() - t0;
@@ -191,22 +228,37 @@ public class QAServiceImpl implements QAService {
         }
 
         // Step 3: embed (cached) — may throw EmbeddingUnavailableException (propagates)
-        float[] vec = embed(query, rewritten.rewritten());
-        stamps[2] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1];
-        stageTimers.get("embed").record(stamps[2], TimeUnit.MILLISECONDS);
+        long embedStart = System.currentTimeMillis();
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "embed");
+        float[] vec;
+        try {
+            vec = embed(query, rewritten.rewritten());
+        } finally {
+            stamps[2] = System.currentTimeMillis() - embedStart;
+            stageTimers.get("embed").record(stamps[2], TimeUnit.MILLISECONDS);
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
 
         // Step 4: retrieve — may throw VectorStoreUnavailableException (propagates)
+        long retrieveStart = System.currentTimeMillis();
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "retrieve");
         int topK = query.topK() > 0 ? query.topK() : DEFAULT_TOP_K;
-        List<Chunk> retrieved = retrieve(query, vec, topK);
-        stamps[3] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2];
-        stageTimers.get("retrieve").record(stamps[3], TimeUnit.MILLISECONDS);
+        List<Chunk> retrieved;
+        try {
+            retrieved = retrieve(query, vec, topK);
+        } finally {
+            stamps[3] = System.currentTimeMillis() - retrieveStart;
+            stageTimers.get("retrieve").record(stamps[3], TimeUnit.MILLISECONDS);
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
 
         // Step 5: rerank (with fallback on failure)
+        long rerankStart = System.currentTimeMillis();
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "rerank");
         int topN = DEFAULT_TOP_N;
         List<Chunk> reranked;
         try {
             reranked = rerank(rewritten.rewritten(), retrieved, topN);
-            stamps[4] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2] - stamps[3];
         } catch (RerankUnavailableException reu) {
             log.warn("QA rerank unavailable for tenant={} queryHash={} err={} — using TopK directly",
                     query.tenantId(), queryHash, reu.getMessage());
@@ -216,9 +268,11 @@ public class QAServiceImpl implements QAService {
                     .register(meterRegistry)
                     .increment();
             reranked = retrieved.size() > topN ? retrieved.subList(0, topN) : retrieved;
-            stamps[4] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2] - stamps[3];
+        } finally {
+            stamps[4] = System.currentTimeMillis() - rerankStart;
+            stageTimers.get("rerank").record(stamps[4], TimeUnit.MILLISECONDS);
+            MDC.remove(PipelineMdc.KEY_STAGE);
         }
-        stageTimers.get("rerank").record(stamps[4], TimeUnit.MILLISECONDS);
 
         // Empty retrieval → graceful "I don't know" with hot questions.
         if (reranked.isEmpty()) {
@@ -235,12 +289,21 @@ public class QAServiceImpl implements QAService {
         }
 
         // Step 6: assemble prompt (token budget)
-        AssembledPrompt assembled = contextAssembler.assemble(
-                reranked, rewritten.rewritten(), ContextAssembler.DEFAULT_TOKEN_BUDGET);
-        stamps[5] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2] - stamps[3] - stamps[4];
-        stageTimers.get("assemble").record(stamps[5], TimeUnit.MILLISECONDS);
+        long assembleStart = System.currentTimeMillis();
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "assemble");
+        AssembledPrompt assembled;
+        try {
+            assembled = contextAssembler.assemble(
+                    reranked, rewritten.rewritten(), ContextAssembler.DEFAULT_TOKEN_BUDGET);
+        } finally {
+            stamps[5] = System.currentTimeMillis() - assembleStart;
+            stageTimers.get("assemble").record(stamps[5], TimeUnit.MILLISECONDS);
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
 
         // Step 7: generate (with fallback on LLM failure)
+        long generateStart = System.currentTimeMillis();
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "generate");
         String finalText;
         AnswerSource source;
         try {
@@ -269,9 +332,11 @@ public class QAServiceImpl implements QAService {
                     .increment();
             finalText = fallbackFromChunks(rewritten.rewritten(), reranked);
             source = AnswerSource.FALLBACK_RULE;
+        } finally {
+            stamps[6] = System.currentTimeMillis() - generateStart;
+            stageTimers.get("generate").record(stamps[6], TimeUnit.MILLISECONDS);
+            MDC.remove(PipelineMdc.KEY_STAGE);
         }
-        stamps[6] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2] - stamps[3] - stamps[4] - stamps[5];
-        stageTimers.get("generate").record(stamps[6], TimeUnit.MILLISECONDS);
 
         // Publish the requests counter with the final source tag.
         Counter.builder("rag.qa.requests.total")
@@ -301,9 +366,14 @@ public class QAServiceImpl implements QAService {
                         "anyTruncated", assembled.anyTruncated()));
 
         // Step 8: cache write (best-effort)
-        cachePut(query.tenantId(), queryHash, answer);
-        stamps[7] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2]
-                - stamps[3] - stamps[4] - stamps[5] - stamps[6];
+        long cachePutStart = System.currentTimeMillis();
+        PipelineMdc.put(PipelineMdc.KEY_STAGE, "cachePut");
+        try {
+            cachePut(query.tenantId(), queryHash, answer);
+        } finally {
+            stamps[7] = System.currentTimeMillis() - cachePutStart;
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
 
         return answer;
     }

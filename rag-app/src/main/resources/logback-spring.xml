@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logback config for rag-app (Spring Boot 3.x).
+
+  Two modes, switched by env var `LOG_FORMAT`:
+    - `console` (default): human-readable, MDC fields rendered inline:
+        2026-06-17 18:00:00.123  INFO [tenant=acme] [reqId=...] [jobId=j-abc] [stage=embed]
+        io.github.yysf1949.rag.pipeline.qa.QAServiceImpl : QA cache HIT ...
+    - `json` (set LOG_FORMAT=json): machine-readable, one event per line.
+      Used when log shipping (Loki / Splunk / DataDog) consumes stdout.
+
+  MDC keys (set by PipelineMdc + MdcTenantFilter):
+    tenant      → tenant id (e.g. "acme", "tenant-A")
+    requestId   → correlation id from X-Request-Id header, generated if absent
+    jobId       → ingest job id (set during ingest pipeline only)
+    queryHash   → SHA-256 of the rewritten query (set during QA pipeline only)
+    stage       → current pipeline stage (rewrite / embed / retrieve / ...)
+
+  Pattern tokens:
+    %X{key:-default} renders the MDC value, or "default" if absent.
+    The default-value trick keeps the field present even for lines that
+    happen outside a request (boot, scheduler, health-check) — easier to
+    regex in log shipping.
+-->
+<configuration scan="false">
+
+    <property name="LOG_PATTERN_CONSOLE"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{tenant:-none}] [%X{requestId:-none}] [%X{jobId:-}] [%X{queryHash:-}] [stage=%X{stage:-}] %-40.40logger{39} : %m%n%xException"/>
+
+    <appender name="CONSOLE_TEXT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN_CONSOLE}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- JSON encoder — only enabled when LOG_FORMAT=json. We don't depend on
+         logstash-logback-encoder to keep the fat-jar small; the JSON layout
+         below uses logback's own PatternLayout with explicit field tokens. -->
+    <appender name="CONSOLE_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>{
+  "ts":"%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX}",
+  "level":"%5p",
+  "logger":"%logger{40}",
+  "thread":"%thread",
+  "tenant":"%X{tenant:-}",
+  "requestId":"%X{requestId:-}",
+  "jobId":"%X{jobId:-}",
+  "queryHash":"%X{queryHash:-}",
+  "stage":"%X{stage:-}",
+  "msg":%msg,
+  "exception":"%replace(%xException){'[\r\n]+',' |}"
+}%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- Default: console text. Switch via env var LOG_FORMAT=json. -->
+    <root level="INFO">
+        <appender-ref ref="${LOG_APPENDER:-CONSOLE_TEXT}"/>
+    </root>
+
+    <!-- Our own code at INFO by default; QA at DEBUG when LOG_LEVEL_RAG=DEBUG. -->
+    <logger name="io.github.yysf1949.rag" level="${LOG_LEVEL_RAG:-INFO}"/>
+    <logger name="org.springframework.web" level="INFO"/>
+    <logger name="org.springframework.data.redis" level="WARN"/>
+
+</configuration>
