@@ -1,0 +1,39 @@
+# docker-compose for local development of spring-ai-alibaba-rag.
+#
+# Usage:
+#   docker compose up -d redis
+#   docker compose ps    # confirm "running"
+#   docker compose exec redis redis-cli MODULE LIST   # must include "search"
+#
+# See docs/RUNBOOK.md §3 for the full local-dev workflow.
+
+services:
+
+  redis:
+    # Redis Stack 7.4 ships with RediSearch (HNSW vector index),
+    # RedisJSON, and RedisBloom. We only need RediSearch for the
+    # vector store + 3-tier cache (spec §5, §13.6-§13.8).
+    image: redis/redis-stack-server:7.4.0-v3
+    container_name: rag-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    # 256 MB cap is enough for ~1M vectors at 1536-dim with HNSW M=16.
+    # Bump to 1g+ for production.
+    command: >
+      redis-server
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --loadmodule /opt/redis-stack/lib/redistack.so
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      # Persist Redis data across `docker compose down`. Use `down -v` to wipe.
+      - redis_data:/data
+
+volumes:
+  redis_data:
+    name: rag_redis_data
