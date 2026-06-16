@@ -90,7 +90,8 @@ public class BeansConfig {
             @Autowired(required = false) RerankService reranker,
             ContextAssembler contextAssembler,
             @Autowired(required = false) LlmService llm,
-            @Autowired(required = false) HotQuestionProvider hotQuestions) {
+            @Autowired(required = false) HotQuestionProvider hotQuestions,
+            io.micrometer.core.instrument.MeterRegistry meterRegistry) {
 
         // Fall back to no-op variants when the real impl is not on the
         // classpath. EmbeddingGateway / RerankService / LlmService are
@@ -104,7 +105,11 @@ public class BeansConfig {
         LlmService ll = llm != null ? llm : new io.github.yysf1949.rag.embedding.stub.StubLlmService();
         HotQuestionProvider hq = hotQuestions != null ? hotQuestions : new InMemoryHotQuestionProvider();
 
-        return new QAServiceImpl(rewriter, ans, ec, eg, vs, rr, contextAssembler, ll, hq);
+        // spec §9.1: wire the 10-arg constructor so all rag.qa.* metrics
+        // are published to the Spring-managed MeterRegistry (which the
+        // actuator /actuator/prometheus endpoint exposes).
+        return new QAServiceImpl(rewriter, ans, ec, eg, vs, rr, contextAssembler, ll, hq,
+                meterRegistry);
     }
 
     // ─── no-op fallbacks (assembly-layer degradation only) ──────────────

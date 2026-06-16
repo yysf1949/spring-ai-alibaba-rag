@@ -65,8 +65,9 @@ public class IngestConfig {
             @Autowired io.github.yysf1949.rag.core.port.EmbeddingGateway embeddingGateway,
             @Autowired io.github.yysf1949.rag.core.port.VectorStore vectorStore,
             IngestJobRepository jobRepository,
-            ExecutorService ingestExecutor) {
+            ExecutorService ingestExecutor,
+            io.micrometer.core.instrument.MeterRegistry meterRegistry) {
         return new IngestServiceImpl(splitter, embeddingGateway, vectorStore,
-                jobRepository, ingestExecutor);
+                jobRepository, ingestExecutor, IngestServiceImpl.DEFAULT_EMBED_BATCH, meterRegistry);
     }
 }

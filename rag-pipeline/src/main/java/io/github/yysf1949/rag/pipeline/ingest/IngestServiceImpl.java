@@ -12,13 +12,19 @@ import io.github.yysf1949.rag.core.port.IngestJobRepository;
 import io.github.yysf1949.rag.core.port.IngestService;
 import io.github.yysf1949.rag.core.port.VectorStore;
 import io.github.yysf1949.rag.pipeline.splitter.ChunkSplitter;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Default {@link IngestService} implementation — design spec §6.1.
@@ -72,6 +78,7 @@ public class IngestServiceImpl implements IngestService {
     private final IngestJobRepository jobRepository;
     private final ExecutorService asyncExecutor;
     private final int embedBatchSize;
+    private final MeterRegistry meterRegistry;
 
     public IngestServiceImpl(ChunkSplitter splitter,
                              EmbeddingGateway embeddingGateway,
@@ -79,7 +86,7 @@ public class IngestServiceImpl implements IngestService {
                              IngestJobRepository jobRepository,
                              ExecutorService asyncExecutor) {
         this(splitter, embeddingGateway, vectorStore, jobRepository,
-                asyncExecutor, DEFAULT_EMBED_BATCH);
+                asyncExecutor, DEFAULT_EMBED_BATCH, new SimpleMeterRegistry());
     }
 
     public IngestServiceImpl(ChunkSplitter splitter,
@@ -88,6 +95,17 @@ public class IngestServiceImpl implements IngestService {
                              IngestJobRepository jobRepository,
                              ExecutorService asyncExecutor,
                              int embedBatchSize) {
+        this(splitter, embeddingGateway, vectorStore, jobRepository,
+                asyncExecutor, embedBatchSize, new SimpleMeterRegistry());
+    }
+
+    public IngestServiceImpl(ChunkSplitter splitter,
+                             EmbeddingGateway embeddingGateway,
+                             VectorStore vectorStore,
+                             IngestJobRepository jobRepository,
+                             ExecutorService asyncExecutor,
+                             int embedBatchSize,
+                             MeterRegistry meterRegistry) {
         if (splitter == null) throw new IllegalArgumentException("splitter must not be null");
         if (embeddingGateway == null) throw new IllegalArgumentException("embeddingGateway must not be null");
         if (vectorStore == null) throw new IllegalArgumentException("vectorStore must not be null");
@@ -95,12 +113,14 @@ public class IngestServiceImpl implements IngestService {
         if (asyncExecutor == null) throw new IllegalArgumentException("asyncExecutor must not be null");
         if (embedBatchSize <= 0) throw new IllegalArgumentException(
                 "embedBatchSize must be > 0, got " + embedBatchSize);
+        if (meterRegistry == null) throw new IllegalArgumentException("meterRegistry must not be null");
         this.splitter = splitter;
         this.embeddingGateway = embeddingGateway;
         this.vectorStore = vectorStore;
         this.jobRepository = jobRepository;
         this.asyncExecutor = asyncExecutor;
         this.embedBatchSize = embedBatchSize;
+        this.meterRegistry = meterRegistry;
     }
 
     // ─── public API ────────────────────────────────────────────────────────
@@ -109,7 +129,13 @@ public class IngestServiceImpl implements IngestService {
     public IngestJob ingestSync(Document document) {
         IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId());
         jobRepository.save(job);
-        return runPipeline(document, job);
+        long t0 = System.nanoTime();
+        IngestJob result = runPipeline(document, job);
+        Timer.builder("rag.ingest.duration.ms")
+                .tag("tenant", document.tenantId())
+                .register(meterRegistry)
+                .record(Duration.ofNanos(System.nanoTime() - t0).toMillis(), TimeUnit.MILLISECONDS);
+        return result;
     }
 
     @Override
@@ -145,6 +171,7 @@ public class IngestServiceImpl implements IngestService {
                     "publish requires status READY, got " + job.status() + " for job " + jobId);
         }
         long kbVersion = parseKbVersion(job);
+        IngestJob result;
         try {
             vectorStore.publish(job.tenantId(),
                     // kbId is the first segment of documentId-encoded info, but
@@ -152,18 +179,34 @@ public class IngestServiceImpl implements IngestService {
                     // documentId as "kbId/docId". Reconstruct on the way out.
                     extractKbId(job.documentId()),
                     kbVersion);
+            IngestJob published = job.withStatus(IngestJobStatus.PUBLISHED);
+            jobRepository.save(published);
+            result = published;
         } catch (VectorStoreUnavailableException ex) {
             IngestJob failed = job.withStatus(IngestJobStatus.FAILED)
                     .withError("publish failed: " + ex.getMessage());
             jobRepository.save(failed);
-            return failed;
+            result = failed;
         }
-        IngestJob published = job.withStatus(IngestJobStatus.PUBLISHED);
-        jobRepository.save(published);
-        return published;
+        recordJobTerminal(result.tenantId(), result.status().name());
+        return result;
     }
 
     // ─── pipeline core ─────────────────────────────────────────────────────
+
+    /**
+     * Record a job's terminal state in the metrics counter
+     * {@code rag.ingest.jobs.total{tenant,status}}. Centralised so the
+     * READY / FAILED / PUBLISHED paths all share the same metric shape
+     * (spec §9.1).
+     */
+    private void recordJobTerminal(String tenantId, String status) {
+        Counter.builder("rag.ingest.jobs.total")
+                .tag("tenant", tenantId == null ? "unknown" : tenantId)
+                .tag("status", status)
+                .register(meterRegistry)
+                .increment();
+    }
 
     private IngestJob runPipeline(Document doc, IngestJob job) {
         IngestJob processing = job.withStatus(IngestJobStatus.PROCESSING);
@@ -178,6 +221,7 @@ public class IngestServiceImpl implements IngestService {
             IngestJob failed = processing.withStatus(IngestJobStatus.FAILED)
                     .withError("splitter: " + e.getMessage());
             jobRepository.save(failed);
+            recordJobTerminal(failed.tenantId(), "FAILED");
             return failed;
         }
         if (chunks.size() > MAX_CHUNKS_PER_DOCUMENT) {
@@ -187,6 +231,7 @@ public class IngestServiceImpl implements IngestService {
             log.warn("rejecting jobId={} docId={} : {}", job.jobId(), doc.documentId(), msg);
             IngestJob failed = processing.withStatus(IngestJobStatus.FAILED).withError(msg);
             jobRepository.save(failed);
+            recordJobTerminal(failed.tenantId(), "FAILED");
             return failed;
         }
         IngestJob counted = processing.withTotalChunks(chunks.size());
@@ -210,6 +255,7 @@ public class IngestServiceImpl implements IngestService {
             IngestJob failed = counted.withStatus(IngestJobStatus.FAILED)
                     .withError("embedding: " + eue.getMessage());
             jobRepository.save(failed);
+            recordJobTerminal(failed.tenantId(), "FAILED");
             return failed;
         }
         if (vectors.size() != chunks.size()) {
@@ -217,6 +263,7 @@ public class IngestServiceImpl implements IngestService {
                     + " vectors for " + chunks.size() + " chunks";
             IngestJob failed = counted.withStatus(IngestJobStatus.FAILED).withError(msg);
             jobRepository.save(failed);
+            recordJobTerminal(failed.tenantId(), "FAILED");
             return failed;
         }
         IngestJob embedded = counted.withEmbeddedChunks(chunks.size());
@@ -241,6 +288,7 @@ public class IngestServiceImpl implements IngestService {
             IngestJob failed = embedded.withStatus(IngestJobStatus.FAILED)
                     .withError("all chunks produced invalid vectors");
             jobRepository.save(failed);
+            recordJobTerminal(failed.tenantId(), "FAILED");
             return failed;
         }
         int written;
@@ -251,6 +299,7 @@ public class IngestServiceImpl implements IngestService {
             IngestJob failed = embedded.withStatus(IngestJobStatus.FAILED)
                     .withError("vectorStore: " + vsue.getMessage());
             jobRepository.save(failed);
+            recordJobTerminal(failed.tenantId(), "FAILED");
             return failed;
         }
         int failed_ = finalChunks.size() - written;
@@ -259,6 +308,11 @@ public class IngestServiceImpl implements IngestService {
                 .withFailedChunks(skipCount + failed_)
                 .withStatus(IngestJobStatus.READY);
         jobRepository.save(ready);
+        recordJobTerminal(ready.tenantId(), "READY");
+        Counter.builder("rag.ingest.chunks.total")
+                .tag("tenant", doc.tenantId())
+                .register(meterRegistry)
+                .increment(written);
         log.info("jobId={} docId={} staged: {} written, {} skipped (bad vec), {} rejected (store)",
                 job.jobId(), doc.documentId(), written, skipCount, failed_);
         return ready;

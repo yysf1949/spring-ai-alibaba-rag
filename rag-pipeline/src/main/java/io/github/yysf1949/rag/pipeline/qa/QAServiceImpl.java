@@ -21,6 +21,10 @@ import io.github.yysf1949.rag.core.port.RewriteService.RewriteResult;
 import io.github.yysf1949.rag.core.port.VectorStore;
 import io.github.yysf1949.rag.pipeline.context.ContextAssembler;
 import io.github.yysf1949.rag.pipeline.context.ContextAssembler.AssembledPrompt;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,6 +38,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Default {@link QAService} implementation — design spec §7.1 + §13.11.
@@ -90,6 +95,15 @@ public class QAServiceImpl implements QAService {
     private final ContextAssembler contextAssembler;
     private final LlmService llm;
     private final HotQuestionProvider hotQuestions;
+    private final MeterRegistry meterRegistry;
+
+    /**
+     * Stage timer names — spec §9.1 metric {@code rag.qa.latency.ms{stage}}.
+     * Each stage records its wall-clock duration as a Micrometer Timer.
+     */
+    private static final List<String> STAGE_NAMES = List.of(
+            "rewrite", "cacheCheck", "embed", "retrieve",
+            "rerank", "assemble", "generate");
 
     public QAServiceImpl(RewriteService rewriter,
                          AnswerCache answerCache,
@@ -100,6 +114,21 @@ public class QAServiceImpl implements QAService {
                          ContextAssembler contextAssembler,
                          LlmService llm,
                          HotQuestionProvider hotQuestions) {
+        this(rewriter, answerCache, embeddingCache, embeddingGateway,
+                vectorStore, reranker, contextAssembler, llm, hotQuestions,
+                new SimpleMeterRegistry());
+    }
+
+    public QAServiceImpl(RewriteService rewriter,
+                         AnswerCache answerCache,
+                         EmbeddingCache embeddingCache,
+                         EmbeddingGateway embeddingGateway,
+                         VectorStore vectorStore,
+                         RerankService reranker,
+                         ContextAssembler contextAssembler,
+                         LlmService llm,
+                         HotQuestionProvider hotQuestions,
+                         MeterRegistry meterRegistry) {
         this.rewriter = Objects.requireNonNull(rewriter, "rewriter");
         this.answerCache = Objects.requireNonNull(answerCache, "answerCache");
         this.embeddingCache = Objects.requireNonNull(embeddingCache, "embeddingCache");
@@ -109,6 +138,7 @@ public class QAServiceImpl implements QAService {
         this.contextAssembler = Objects.requireNonNull(contextAssembler, "contextAssembler");
         this.llm = Objects.requireNonNull(llm, "llm");
         this.hotQuestions = Objects.requireNonNull(hotQuestions, "hotQuestions");
+        this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
     }
 
     @Override
@@ -117,16 +147,23 @@ public class QAServiceImpl implements QAService {
         long t0 = System.currentTimeMillis();
         // Per-stage timing — maps to spec §9.1 metric `rag.qa.latency.ms{stage}`.
         long[] stamps = new long[8];
+        // Per-stage Timer references, resolved once per request (Micrometer
+        // meters are bound to the registry, which is the heavy side of
+        // Counter.builder.register — caching the Timer per stage avoids a
+        // hash lookup on every answer() call).
+        Map<String, Timer> stageTimers = buildStageTimers(query.tenantId());
 
         // Step 1: rewrite
         RewriteResult rewritten = rewrite(query);
         stamps[0] = System.currentTimeMillis() - t0;
+        stageTimers.get("rewrite").record(stamps[0], TimeUnit.MILLISECONDS);
 
         // Step 2: cache check (uses rewritten text + tenant — NOT raw text,
         // because two raw queries that rewrite to the same thing should share
         // a cached answer)
         String queryHash = hashQuery(rewritten.rewritten());
         stamps[1] = System.currentTimeMillis() - t0 - stamps[0];
+        stageTimers.get("cacheCheck").record(stamps[1], TimeUnit.MILLISECONDS);
         Optional<Answer> hit = checkCache(query, queryHash);
         if (hit.isPresent()) {
             Answer a = hit.get();
@@ -135,6 +172,11 @@ public class QAServiceImpl implements QAService {
             // (probably LLM). On a cache HIT we override to CACHE — that's the
             // leg that produced THIS request's response. Latency is freshly
             // measured (the cached one reflects the original request).
+            Counter.builder("rag.qa.requests.total")
+                    .tag("tenant", query.tenantId())
+                    .tag("source", AnswerSource.CACHE.name())
+                    .register(meterRegistry)
+                    .increment();
             return new Answer(
                     a.tenantId(),
                     a.queryHash(),
@@ -151,11 +193,13 @@ public class QAServiceImpl implements QAService {
         // Step 3: embed (cached) — may throw EmbeddingUnavailableException (propagates)
         float[] vec = embed(query, rewritten.rewritten());
         stamps[2] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1];
+        stageTimers.get("embed").record(stamps[2], TimeUnit.MILLISECONDS);
 
         // Step 4: retrieve — may throw VectorStoreUnavailableException (propagates)
         int topK = query.topK() > 0 ? query.topK() : DEFAULT_TOP_K;
         List<Chunk> retrieved = retrieve(query, vec, topK);
         stamps[3] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2];
+        stageTimers.get("retrieve").record(stamps[3], TimeUnit.MILLISECONDS);
 
         // Step 5: rerank (with fallback on failure)
         int topN = DEFAULT_TOP_N;
@@ -166,12 +210,27 @@ public class QAServiceImpl implements QAService {
         } catch (RerankUnavailableException reu) {
             log.warn("QA rerank unavailable for tenant={} queryHash={} err={} — using TopK directly",
                     query.tenantId(), queryHash, reu.getMessage());
+            Counter.builder("rag.qa.degradation.total")
+                    .tag("tenant", query.tenantId())
+                    .tag("reason", "rerank_unavailable")
+                    .register(meterRegistry)
+                    .increment();
             reranked = retrieved.size() > topN ? retrieved.subList(0, topN) : retrieved;
             stamps[4] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2] - stamps[3];
         }
+        stageTimers.get("rerank").record(stamps[4], TimeUnit.MILLISECONDS);
 
         // Empty retrieval → graceful "I don't know" with hot questions.
         if (reranked.isEmpty()) {
+            // Count this terminal state as a FALLBACK_RULE request — the
+            // caller did make a real request, and we did return a
+            // non-empty (graceful) answer, so it should show up in the
+            // requests.total counter (spec §9.1).
+            Counter.builder("rag.qa.requests.total")
+                    .tag("tenant", query.tenantId())
+                    .tag("source", AnswerSource.FALLBACK_RULE.name())
+                    .register(meterRegistry)
+                    .increment();
             return emptyRetrievalAnswer(query, rewritten, queryHash, t0);
         }
 
@@ -179,6 +238,7 @@ public class QAServiceImpl implements QAService {
         AssembledPrompt assembled = contextAssembler.assemble(
                 reranked, rewritten.rewritten(), ContextAssembler.DEFAULT_TOKEN_BUDGET);
         stamps[5] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2] - stamps[3] - stamps[4];
+        stageTimers.get("assemble").record(stamps[5], TimeUnit.MILLISECONDS);
 
         // Step 7: generate (with fallback on LLM failure)
         String finalText;
@@ -189,6 +249,11 @@ public class QAServiceImpl implements QAService {
         } catch (LlmUnavailableException lue) {
             log.warn("QA LLM unavailable for tenant={} queryHash={} err={} — falling back to FALLBACK_RULE",
                     query.tenantId(), queryHash, lue.getMessage());
+            Counter.builder("rag.qa.degradation.total")
+                    .tag("tenant", query.tenantId())
+                    .tag("reason", "llm_unavailable")
+                    .register(meterRegistry)
+                    .increment();
             finalText = fallbackFromChunks(rewritten.rewritten(), reranked);
             source = AnswerSource.FALLBACK_RULE;
         } catch (RuntimeException re) {
@@ -197,10 +262,23 @@ public class QAServiceImpl implements QAService {
             // request thread.
             log.warn("QA LLM threw unexpected for tenant={} queryHash={} err={} — falling back to FALLBACK_RULE",
                     query.tenantId(), queryHash, re.getMessage());
+            Counter.builder("rag.qa.degradation.total")
+                    .tag("tenant", query.tenantId())
+                    .tag("reason", "llm_unavailable")
+                    .register(meterRegistry)
+                    .increment();
             finalText = fallbackFromChunks(rewritten.rewritten(), reranked);
             source = AnswerSource.FALLBACK_RULE;
         }
         stamps[6] = System.currentTimeMillis() - t0 - stamps[0] - stamps[1] - stamps[2] - stamps[3] - stamps[4] - stamps[5];
+        stageTimers.get("generate").record(stamps[6], TimeUnit.MILLISECONDS);
+
+        // Publish the requests counter with the final source tag.
+        Counter.builder("rag.qa.requests.total")
+                .tag("tenant", query.tenantId())
+                .tag("source", source.name())
+                .register(meterRegistry)
+                .increment();
 
         Answer answer = new Answer(
                 query.tenantId(),
@@ -363,6 +441,23 @@ public class QAServiceImpl implements QAService {
             log.warn("QA cache.put failure tenant={} queryHash={} err={} — continuing",
                     tenantId, queryHash, e.getMessage());
         }
+    }
+
+    /**
+     * Build a {@code Map<stageName, Timer>} for the per-stage latency
+     * metrics. Called once per request to avoid re-allocating Timer
+     * references inside the hot loop. Timers are tagged with the tenant
+     * so a single registry can serve multiple tenants.
+     */
+    private Map<String, Timer> buildStageTimers(String tenantId) {
+        Map<String, Timer> out = new java.util.LinkedHashMap<>(STAGE_NAMES.size());
+        for (String stage : STAGE_NAMES) {
+            out.put(stage, Timer.builder("rag.qa.latency.ms")
+                    .tag("stage", stage)
+                    .tag("tenant", tenantId == null ? "unknown" : tenantId)
+                    .register(meterRegistry));
+        }
+        return out;
     }
 
     /**
