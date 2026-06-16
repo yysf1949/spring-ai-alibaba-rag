@@ -41,7 +41,8 @@ rag-app/          — Spring Boot wiring (HTTP, MDC, OpenAPI 3, RFC 7807 errors,
 | 6-D2+D6. OpenAPI 3 + RFC 7807 problem+json errors | ✅ shipped | `f1b2873` |
 | 6-D5. Refactor: move Embedding/Rerank/LLM stubs out of rag-app → rag-embedding | ✅ shipped | `4898b34` |
 | 6-D4. Redis-backed end-to-end test + RedisAutoConfiguration | ✅ shipped | `38628cf` |
-| 5-P4. SiliconFlow real adapters (`BAAI/bge-m3` 1024-dim / `BAAI/bge-reranker-v2-m3` / `Qwen/Qwen2.5-7B-Instruct`) | ✅ shipped | this commit |
+| 5-P4. SiliconFlow real adapters (`BAAI/bge-m3` 1024-dim / `BAAI/bge-reranker-v2-m3` / `Qwen/Qwen2.5-7B-Instruct`) | ✅ shipped | `72fca10` |
+| 7. SiliconFlow auto-config cleanup + duplicate main class removal | ✅ shipped | `83785d1` |
 
 **Test count**: 177 tests, all green (`mvn verify`) — 124 pipeline + 22 embedding (9 stub + 13 siliconflow unit) + 6 redis-core + 8 rag-app controller + 17 rag-core. 23 Redis Stack smoke + 1 IT + 5 SiliconFlow IT skipped when upstream unavailable (see RUNBOOK.md / `rag-embedding/.env.example`).
 
