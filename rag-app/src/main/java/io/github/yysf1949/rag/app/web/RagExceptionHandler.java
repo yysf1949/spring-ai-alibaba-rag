@@ -7,16 +7,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.net.URI;
 import java.time.Instant;
-import java.util.Map;
 
 /**
- * Centralised exception → HTTP mapping — design spec §10.
+ * Centralised exception → RFC 7807 {@code application/problem+json}
+ * mapping — design spec §10.
  *
  * <h2>Mapping table</h2>
  * <table>
@@ -33,74 +35,85 @@ import java.util.Map;
  *   <tr><td>any other {@link RuntimeException}</td><td>500</td>
  *       <td>Unexpected — log full stack, return generic message</td></tr>
  * </table>
+ *
+ * <h2>Why ProblemDetail</h2>
+ * Spring Framework 6 ships {@link ProblemDetail} which implements RFC 7807
+ * out of the box. Using it means: (a) clients can rely on the standard
+ * {@code type / title / status / detail / instance} fields; (b) the
+ * {@code Content-Type} becomes {@code application/problem+json}; (c) no
+ * extra dependency (no springdoc-openapi, no spring-hateoas).
  */
-@ControllerAdvice
+@RestControllerAdvice
 public class RagExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(RagExceptionHandler.class);
 
+    /** Base URI for problem types. {@code /problems/missing-tenant} etc. */
+    private static final URI PROBLEM_BASE = URI.create("https://yysf1949.io/problems/");
+
     @ExceptionHandler(RagController.MissingTenantException.class)
-    public ResponseEntity<Map<String, Object>> missingTenant(RagController.MissingTenantException ex) {
-        return body(HttpStatus.UNAUTHORIZED, "missing_tenant", ex.getMessage());
+    public ProblemDetail missingTenant(RagController.MissingTenantException ex) {
+        return problem(HttpStatus.UNAUTHORIZED, "missing-tenant", ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, Object>> validation(MethodArgumentNotValidException ex) {
+    public ProblemDetail validation(MethodArgumentNotValidException ex) {
         String msg = ex.getBindingResult().getFieldErrors().stream()
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .reduce((a, b) -> a + "; " + b)
                 .orElse(ex.getMessage());
-        return body(HttpStatus.BAD_REQUEST, "validation_failed", msg);
+        ProblemDetail pd = problem(HttpStatus.BAD_REQUEST, "validation-failed", msg);
+        pd.setProperty("violations", ex.getBindingResult().getFieldErrors().stream()
+                .map(fe -> java.util.Map.of(
+                        "field", fe.getField(),
+                        "rejectedValue", String.valueOf(fe.getRejectedValue()),
+                        "message", fe.getDefaultMessage()))
+                .toList());
+        return pd;
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<Map<String, Object>> constraint(ConstraintViolationException ex) {
-        return body(HttpStatus.BAD_REQUEST, "constraint_violation", ex.getMessage());
+    public ProblemDetail constraint(ConstraintViolationException ex) {
+        return problem(HttpStatus.BAD_REQUEST, "constraint-violation", ex.getMessage());
     }
 
     @ExceptionHandler(VectorStoreUnavailableException.class)
-    public ResponseEntity<Map<String, Object>> vectorStoreDown(VectorStoreUnavailableException ex) {
+    public org.springframework.http.ResponseEntity<ProblemDetail> vectorStoreDown(VectorStoreUnavailableException ex) {
         log.warn("Vector store unavailable: {}", ex.getMessage());
-        return body(HttpStatus.SERVICE_UNAVAILABLE, "vector_store_unavailable",
-                "Vector store is currently unavailable. Please retry.",
-                Map.of(HttpHeaders.RETRY_AFTER, "30"));
+        return withRetryAfter(problem(HttpStatus.SERVICE_UNAVAILABLE,
+                "vector-store-unavailable",
+                "Vector store is currently unavailable. Please retry."));
     }
 
     @ExceptionHandler(EmbeddingUnavailableException.class)
-    public ResponseEntity<Map<String, Object>> embeddingDown(EmbeddingUnavailableException ex) {
+    public org.springframework.http.ResponseEntity<ProblemDetail> embeddingDown(EmbeddingUnavailableException ex) {
         log.warn("Embedding gateway unavailable: {}", ex.getMessage());
-        return body(HttpStatus.SERVICE_UNAVAILABLE, "embedding_unavailable",
-                "Embedding service is currently unavailable. Please retry.",
-                Map.of(HttpHeaders.RETRY_AFTER, "30"));
+        return withRetryAfter(problem(HttpStatus.SERVICE_UNAVAILABLE,
+                "embedding-unavailable",
+                "Embedding service is currently unavailable. Please retry."));
     }
 
     @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<Map<String, Object>> unexpected(RuntimeException ex) {
+    public ProblemDetail unexpected(RuntimeException ex) {
         log.error("Unhandled exception in QA controller", ex);
-        return body(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error",
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "internal-error",
                 "An unexpected error occurred. The incident has been logged.");
     }
 
-    private static ResponseEntity<Map<String, Object>> body(HttpStatus status, String code, String msg) {
-        return body(status, code, msg, Map.of());
+    // ─── helpers ─────────────────────────────────────────────────────────
+
+    private static ProblemDetail problem(HttpStatus status, String slug, String detail) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(status, detail);
+        pd.setType(PROBLEM_BASE.resolve(slug));
+        pd.setTitle(slug);
+        pd.setProperty("timestamp", Instant.now().toString());
+        return pd;
     }
 
-    private static ResponseEntity<Map<String, Object>> body(
-            HttpStatus status, String code, String msg, Map<String, String> headers) {
-        var b = ResponseEntity.status(status)
-                .body(Map.<String, Object>of(
-                        "timestamp", Instant.now().toString(),
-                        "status", status.value(),
-                        "error", code,
-                        "message", msg));
-        for (var e : headers.entrySet()) {
-            b = ResponseEntity.status(status).header(e.getKey(), e.getValue())
-                    .body(Map.<String, Object>of(
-                            "timestamp", Instant.now().toString(),
-                            "status", status.value(),
-                            "error", code,
-                            "message", msg));
-        }
-        return b;
+    private static org.springframework.http.ResponseEntity<ProblemDetail> withRetryAfter(ProblemDetail pd) {
+        return org.springframework.http.ResponseEntity.status(pd.getStatus())
+                .header(HttpHeaders.RETRY_AFTER, "30")
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(pd);
     }
 }

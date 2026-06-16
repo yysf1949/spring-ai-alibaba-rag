@@ -6,11 +6,18 @@ import io.github.yysf1949.rag.core.model.Answer;
 import io.github.yysf1949.rag.core.model.KbVersion;
 import io.github.yysf1949.rag.core.model.Query;
 import io.github.yysf1949.rag.core.port.QAService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -47,6 +54,7 @@ import java.util.Set;
  */
 @RestController
 @RequestMapping("/api")
+@Tag(name = "QA", description = "Online question-answering endpoints.")
 public class RagController {
 
     private final QAService qaService;
@@ -56,6 +64,19 @@ public class RagController {
     }
 
     @PostMapping("/qa")
+    @Operation(
+            summary = "Answer a user query against the tenant knowledge base.",
+            description = "Runs the full online chain (rewrite → embed → retrieve → rerank → assemble → LLM). "
+                    + "The X-Tenant-Id header is authoritative; the body's tenantId (if any) is ignored.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Answer produced (possibly a fallback)."),
+            @ApiResponse(responseCode = "400", description = "Validation failure (missing userId / rawText).",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "401", description = "Missing or blank X-Tenant-Id header.",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "503", description = "Vector store or embedding gateway unavailable.",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
     public ResponseEntity<Answer> qa(
             HttpServletRequest request,
             @Valid @RequestBody QaRequest body) {
@@ -97,21 +118,32 @@ public class RagController {
      * Public DTO for the {@code POST /api/qa} body. {@code tenantId} is
      * intentionally absent — see class javadoc on tenant resolution.
      */
+    @Schema(description = "Request payload for POST /api/qa.")
     public static class QaRequest {
         @NotBlank
+        @Schema(description = "End-user identifier.", example = "u-7782")
         public String userId;
+        @Schema(description = "Optional conversation session id for follow-up queries.")
         public String sessionId;
         @NotBlank
+        @Schema(description = "Raw user query (Chinese or English).", example = "如何重置密码？")
         public String rawText;
+        @Schema(description = "Permission tags the user is granted; chunks without a matching tag are filtered.")
         public List<String> permissionTags;
+        @Schema(description = "Override the default top-K retrieval. 0 means use the system default.",
+                example = "0")
         public Integer topK;
+        @Schema(description = "Pin the query to a specific knowledge-base version.")
         public KbVersionDto kbVersion;
     }
 
+    @Schema(description = "Knowledge-base version pin.")
     public static class KbVersionDto {
         @NotBlank
+        @Schema(description = "Knowledge-base identifier.", example = "kb-prod-001")
         public String kbId;
         @NotNull
+        @Schema(description = "Version number (monotonic).", example = "42")
         public Long version;
     }
 
