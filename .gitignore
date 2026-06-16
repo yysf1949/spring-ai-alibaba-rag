@@ -1,35 +1,42 @@
-# IDE
-.idea/
-*.iml
-.vscode/
-.project
-.classpath
-.settings/
-.factorypath
-
-# Build
+# Build artifacts
 target/
 build/
 out/
 *.class
 *.jar
 *.war
+*.ear
 
-# Logs
-*.log
-logs/
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.project
+.classpath
+.settings/
+*.swp
+*.swo
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Env
+# Logs
+*.log
+logs/
+
+# Local env / secrets — NEVER commit
 .env
 .env.local
 application-local.yml
+application-local.yaml
+application-dev.yml
+**/secrets.yml
+**/secrets.yaml
 
-# Maven
-.m2/
-
-# Test reports
-target/surefire-reports/
+# Maven wrapper (we use system maven 3.9.16)
+.mvn/
+mvnw
+mvnw.cmd

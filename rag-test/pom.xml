@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.yysf1949.rag</groupId>
+        <artifactId>spring-ai-alibaba-rag</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>rag-test</artifactId>
+    <name>rag-test</name>
+    <description>
+        Integration tests + §18 refund-rule end-to-end demo.
+        - Testcontainers Redis Stack (redislabs/redistest:centos7 or redis/redis-stack-server)
+        - Mock DashScope via @MockBean
+        - Real DashScope via @EnabledIfEnvironmentVariable("DASHSCOPE_API_KEY")
+        Design spec §11, §18.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.yysf1949.rag</groupId>
+            <artifactId>rag-app</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.redis</groupId>
+            <artifactId>testcontainers-redis</artifactId>
+            <version>2.2.2</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
