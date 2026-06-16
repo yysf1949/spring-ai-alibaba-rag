@@ -1,0 +1,37 @@
+{
+  "_comment": "Refund-rule end-to-end eval fixture (spec §11.3, §18). NOT parsed at runtime — see RefundRuleEndToEndTest which inlines a parallel Document. Keep these two in sync.",
+  "kbId": "kb-refund",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/refund-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-refund",
+    "kbId": "kb-refund",
+    "documentId": "kb-refund/doc-refund-v1",
+    "title": "退款规则",
+    "sections": [
+      {
+        "heading": "通用条款",
+        "body": "用户在下单后 7 日内可申请无理由退款。运费退还规则：商品签收后 7 日内可申请运费退款。运费退款金额按实际支付运费计算，特殊商品（虚拟卡、定制商品）除外。"
+      },
+      {
+        "heading": "申请流程",
+        "body": "第 1 步：登录账户进入「我的订单」。第 2 步：选择目标订单点击「申请退款」。第 3 步：填写退款原因并提交，客服将在 24 小时内审核。审核通过后，运费退还与货款同时原路退回。"
+      },
+      {
+        "heading": "特殊商品",
+        "body": "虚拟商品、定制商品、生鲜类商品不支持 7 天无理由退款，运费亦不退还。具体以商品详情页标注为准。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "alice",
+    "rawText": "用户付了运费但商品质量问题退款，运费退吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "运费退还",
+    "mustContainSourceUri": "https://docs.example.com/refund-policy"
+  }
+}
