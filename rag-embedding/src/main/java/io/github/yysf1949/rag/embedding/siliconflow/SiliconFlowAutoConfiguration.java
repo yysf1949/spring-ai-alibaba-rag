@@ -49,18 +49,14 @@ public class SiliconFlowAutoConfiguration {
         public boolean matches(
                 org.springframework.context.annotation.ConditionContext context,
                 org.springframework.core.type.AnnotatedTypeMetadata metadata) {
-            // Pull properties via the Binder so we don't need a bean of
-            // SiliconFlowProperties yet — this condition runs early.
             var env = context.getEnvironment();
-            boolean enabled = Boolean.parseBoolean(env.getProperty("rag.siliconflow.enabled", "false"));
+            // SPRING_APPLICATION_JSON injects resolved values directly
+            // into the Environment as first-class PropertySource,
+            // bypassing the YAML-placeholder-unresolved issue.
+            boolean enabled = "true".equalsIgnoreCase(env.getProperty("rag.siliconflow.enabled", "false"));
             String key = env.getProperty("rag.siliconflow.api-key", "");
-            return enabled && key != null && !key.isBlank();
+            return enabled && !key.isBlank();
         }
-    }
-
-    @Bean
-    public SiliconFlowProperties siliconFlowProperties() {
-        return new SiliconFlowProperties();
     }
 
     @Bean
@@ -82,7 +78,7 @@ public class SiliconFlowAutoConfiguration {
     }
 
     @Bean
-    @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(EmbeddingGateway.class)
+    @org.springframework.context.annotation.Primary
     public EmbeddingGateway siliconFlowEmbeddingGateway(
             WebClient siliconFlowWebClient,
             SiliconFlowProperties props,
@@ -92,7 +88,7 @@ public class SiliconFlowAutoConfiguration {
     }
 
     @Bean
-    @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(RerankService.class)
+    @org.springframework.context.annotation.Primary
     public RerankService siliconFlowRerankService(
             WebClient siliconFlowWebClient,
             SiliconFlowProperties props) {
@@ -100,7 +96,7 @@ public class SiliconFlowAutoConfiguration {
     }
 
     @Bean
-    @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(LlmService.class)
+    @org.springframework.context.annotation.Primary
     public LlmService siliconFlowLlmService(
             WebClient siliconFlowWebClient,
             SiliconFlowProperties props) {
