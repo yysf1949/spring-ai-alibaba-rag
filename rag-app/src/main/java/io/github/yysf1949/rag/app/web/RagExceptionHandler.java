@@ -79,7 +79,8 @@ public class RagExceptionHandler {
 
     @ExceptionHandler(VectorStoreUnavailableException.class)
     public org.springframework.http.ResponseEntity<ProblemDetail> vectorStoreDown(VectorStoreUnavailableException ex) {
-        log.warn("Vector store unavailable: {}", ex.getMessage());
+        log.warn("Vector store unavailable: {} (cause: {})", ex.getMessage(),
+                ex.getCause() != null ? ex.getCause().toString() : "n/a");
         return withRetryAfter(problem(HttpStatus.SERVICE_UNAVAILABLE,
                 "vector-store-unavailable",
                 "Vector store is currently unavailable. Please retry."));

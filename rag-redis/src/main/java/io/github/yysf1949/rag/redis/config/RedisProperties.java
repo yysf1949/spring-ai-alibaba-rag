@@ -1,5 +1,7 @@
 package io.github.yysf1949.rag.redis.config;
 
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
 /**
  * Strongly-typed configuration for the Redis pool.
  *
@@ -16,6 +18,7 @@ package io.github.yysf1949.rag.redis.config;
  * @param maxWaitMs        max block time waiting for a free connection
  * @param commandTimeoutMs per-command timeout
  */
+@ConfigurationProperties(prefix = "spring.rag.redis")
 public record RedisProperties(
         String host,
         int port,
