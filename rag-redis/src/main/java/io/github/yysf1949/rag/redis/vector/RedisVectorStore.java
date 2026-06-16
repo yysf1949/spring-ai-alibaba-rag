@@ -6,6 +6,9 @@ import io.github.yysf1949.rag.core.model.ChunkStatus;
 import io.github.yysf1949.rag.core.model.PermissionMode;
 import io.github.yysf1949.rag.core.port.VectorStore;
 import io.github.yysf1949.rag.redis.config.RedisConnection;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.UnifiedJedis;
@@ -52,10 +55,16 @@ public class RedisVectorStore implements VectorStore {
 
     private final RedisConnection connection;
     private final RedisIndexManager indexManager;
+    private final MeterRegistry meterRegistry;
 
     public RedisVectorStore(RedisConnection connection, RedisIndexManager indexManager) {
+        this(connection, indexManager, new SimpleMeterRegistry());
+    }
+
+    public RedisVectorStore(RedisConnection connection, RedisIndexManager indexManager, MeterRegistry meterRegistry) {
         this.connection = connection;
         this.indexManager = indexManager;
+        this.meterRegistry = meterRegistry;
     }
 
     // ─── upsert ────────────────────────────────────────────────────────────
@@ -124,56 +133,63 @@ public class RedisVectorStore implements VectorStore {
             PermissionMode permissionMode,
             int topK
     ) {
-        if (queryVector == null || queryVector.length == 0) {
-            throw new IllegalArgumentException("queryVector must not be empty");
-        }
-        UnifiedJedis client = connection.client();
-        long versionToSearch = resolveActiveVersion(client, tenantId, kbId, kbVersion);
-        String indexAlias = ACTIVE_ALIAS_PREFIX + tenantId + ":" + kbId;
-
-        // Spec §8.1 filter order (server-side, dialect 2 pre-filter form):
-        //   1. tenantId == ?      (hard wall)
-        //   2. kbId == ?
-        //   3. documentVersion <= ? (caller's ceiling — supports reads on a pinned older version)
-        //   4. status == ACTIVE
-        //   5. permissionTags (server-side INTERSECTION pre-filter for both AND and OR)
-        //   6. publishedAt <= now
-        //
-        // RediSearch semantics for TAG fields:
-        //   @permissionTags:{a}        ⇒ chunk.permissionTags contains a
-        //   @permissionTags:{a|b|c}    ⇒ chunk.permissionTags contains at least one of a, b, c
-        // There is no native RediSearch syntax for "chunk must contain ALL of userTags"
-        // (spec §8.2 AND mode ⇒ user's tag set must ⊇ chunk's tag set). For AND
-        // we run the server-side INTERSECTION pre-filter, then enforce the
-        // superset check client-side in {@link #applyAndPermissionFilter}.
-        long nowSec = System.currentTimeMillis() / 1000L;
-        String filter = buildPreFilter(tenantId, kbId, versionToSearch,
-                userPermissionTags, permissionMode, nowSec);
-        String knnQuery = "(" + filter + ")=>[KNN $K @embedding $BLOB AS score]";
-
-        // AND mode requires a post-filter pass to drop chunks that pass the
-        // server-side pre-filter but still have a permission tag the user is
-        // missing. We over-fetch by a small multiplier so the post-filter
-        // doesn't leave us short of `topK` results.
-        int fetchLimit = (permissionMode == PermissionMode.AND && userPermissionTags != null
-                && !userPermissionTags.isEmpty())
-                ? Math.max(topK * 4, 40)
-                : topK;
-
-        FTSearchParams params = FTSearchParams.searchParams()
-                .dialect(2)
-                .addParam("K", fetchLimit)
-                .addParam("BLOB", RedisChunkCodec.toEmbeddingBytes(queryVector))
-                .withScores()
-                .limit(0, fetchLimit);
-
+        Timer.Sample sample = Timer.start(meterRegistry);
         try {
-            SearchResult result = client.ftSearch(indexAlias, knnQuery, params);
-            List<Chunk> raw = mapResultToChunks(client, result, tenantId, kbId);
-            return applyAndPermissionFilter(raw, userPermissionTags, permissionMode, topK);
-        } catch (Exception e) {
-            throw new VectorStoreUnavailableException(
-                    "search failed for tenant=" + tenantId + " kb=" + kbId + " v=" + versionToSearch, e);
+            if (queryVector == null || queryVector.length == 0) {
+                throw new IllegalArgumentException("queryVector must not be empty");
+            }
+            UnifiedJedis client = connection.client();
+            long versionToSearch = resolveActiveVersion(client, tenantId, kbId, kbVersion);
+            String indexAlias = ACTIVE_ALIAS_PREFIX + tenantId + ":" + kbId;
+
+            // Spec §8.1 filter order (server-side, dialect 2 pre-filter form):
+            //   1. tenantId == ?      (hard wall)
+            //   2. kbId == ?
+            //   3. documentVersion <= ? (caller's ceiling — supports reads on a pinned older version)
+            //   4. status == ACTIVE
+            //   5. permissionTags (server-side INTERSECTION pre-filter for both AND and OR)
+            //   6. publishedAt <= now
+            //
+            // RediSearch semantics for TAG fields:
+            //   @permissionTags:{a}        ⇒ chunk.permissionTags contains a
+            //   @permissionTags:{a|b|c}    ⇒ chunk.permissionTags contains at least one of a, b, c
+            // There is no native RediSearch syntax for "chunk must contain ALL of userTags"
+            // (spec §8.2 AND mode ⇒ user's tag set must ⊇ chunk's tag set). For AND
+            // we run the server-side INTERSECTION pre-filter, then enforce the
+            // superset check client-side in {@link #applyAndPermissionFilter}.
+            long nowSec = System.currentTimeMillis() / 1000L;
+            String filter = buildPreFilter(tenantId, kbId, versionToSearch,
+                    userPermissionTags, permissionMode, nowSec);
+            String knnQuery = "(" + filter + ")=>[KNN $K @embedding $BLOB AS score]";
+
+            // AND mode requires a post-filter pass to drop chunks that pass the
+            // server-side pre-filter but still have a permission tag the user is
+            // missing. We over-fetch by a small multiplier so the post-filter
+            // doesn't leave us short of `topK` results.
+            int fetchLimit = (permissionMode == PermissionMode.AND && userPermissionTags != null
+                    && !userPermissionTags.isEmpty())
+                    ? Math.max(topK * 4, 40)
+                    : topK;
+
+            FTSearchParams params = FTSearchParams.searchParams()
+                    .dialect(2)
+                    .addParam("K", fetchLimit)
+                    .addParam("BLOB", RedisChunkCodec.toEmbeddingBytes(queryVector))
+                    .withScores()
+                    .limit(0, fetchLimit);
+
+            try {
+                SearchResult result = client.ftSearch(indexAlias, knnQuery, params);
+                List<Chunk> raw = mapResultToChunks(client, result, tenantId, kbId);
+                return applyAndPermissionFilter(raw, userPermissionTags, permissionMode, topK);
+            } catch (Exception e) {
+                throw new VectorStoreUnavailableException(
+                        "search failed for tenant=" + tenantId + " kb=" + kbId + " v=" + versionToSearch, e);
+            }
+        } finally {
+            sample.stop(Timer.builder("rag.redis.hnsw.search.ms")
+                    .tag("tenant", tenantId)
+                    .register(meterRegistry));
         }
     }
 

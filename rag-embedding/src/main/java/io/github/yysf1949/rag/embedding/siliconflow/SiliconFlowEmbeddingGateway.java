@@ -3,6 +3,9 @@ package io.github.yysf1949.rag.embedding.siliconflow;
 import io.github.yysf1949.rag.core.exception.EmbeddingUnavailableException;
 import io.github.yysf1949.rag.core.port.EmbeddingCache;
 import io.github.yysf1949.rag.core.port.EmbeddingGateway;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -60,11 +63,12 @@ public class SiliconFlowEmbeddingGateway implements EmbeddingGateway {
     private final SiliconFlowProperties properties;
     private final EmbeddingCache cache; // may be null
     private final int dimension;
+    private final MeterRegistry meterRegistry;
 
     public SiliconFlowEmbeddingGateway(WebClient webClient,
                                        SiliconFlowProperties properties,
                                        EmbeddingCache cache) {
-        this(webClient, properties, cache, Duration.ofSeconds(1), Duration.ofSeconds(5));
+        this(webClient, properties, cache, Duration.ofSeconds(1), Duration.ofSeconds(5), new SimpleMeterRegistry());
     }
 
     /**
@@ -76,12 +80,22 @@ public class SiliconFlowEmbeddingGateway implements EmbeddingGateway {
                                        EmbeddingCache cache,
                                        Duration backoffMin,
                                        Duration backoffMax) {
+        this(webClient, properties, cache, backoffMin, backoffMax, new SimpleMeterRegistry());
+    }
+
+    public SiliconFlowEmbeddingGateway(WebClient webClient,
+                                       SiliconFlowProperties properties,
+                                       EmbeddingCache cache,
+                                       Duration backoffMin,
+                                       Duration backoffMax,
+                                       MeterRegistry meterRegistry) {
         this.webClient = webClient;
         this.properties = properties;
         this.cache = cache;
         this.dimension = properties.getEmbedding().getDimension();
         this.backoffMin = backoffMin;
         this.backoffMax = backoffMax;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -192,49 +206,56 @@ public class SiliconFlowEmbeddingGateway implements EmbeddingGateway {
     // ─── internal HTTP call with retry ───────────────────────────────
 
     private List<float[]> callEmbeddings(List<String> texts) {
-        EmbeddingRequest body = new EmbeddingRequest();
-        body.model = properties.getEmbedding().getModel();
-        body.input = texts;
-
-        int maxRetries = Math.max(0, properties.getEmbedding().getMaxRetries());
-        int timeoutSeconds = Math.max(1, properties.getEmbedding().getTimeoutSeconds());
-
+        Timer.Sample sample = Timer.start(meterRegistry);
         try {
-            EmbeddingResponse resp = webClient.post()
-                    .uri("/embeddings")
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(EmbeddingResponse.class)
-                    .timeout(Duration.ofSeconds(timeoutSeconds))
-                    .retryWhen(Retry.backoff(maxRetries, backoffMin)
-                            .maxBackoff(backoffMax)
-                            .filter(SiliconFlowEmbeddingGateway::isTransient))
-                    .onErrorResume(this::mapToEmbeddingUnavailable)
-                    .block();
+            EmbeddingRequest body = new EmbeddingRequest();
+            body.model = properties.getEmbedding().getModel();
+            body.input = texts;
 
-            if (resp == null || resp.data == null || resp.data.isEmpty()) {
-                throw new EmbeddingUnavailableException("SiliconFlow returned empty embedding response");
-            }
-            if (resp.data.size() != texts.size()) {
-                throw new EmbeddingUnavailableException(
-                        "SiliconFlow returned " + resp.data.size() + " vectors for " + texts.size() + " inputs");
-            }
-            List<float[]> vectors = new ArrayList<>(resp.data.size());
-            for (EmbeddingData d : resp.data) {
-                if (d.embedding == null || d.embedding.length != dimension) {
-                    throw new EmbeddingUnavailableException(
-                            "SiliconFlow returned vector of length "
-                                    + (d.embedding == null ? "null" : d.embedding.length)
-                                    + " (expected " + dimension + ")");
+            int maxRetries = Math.max(0, properties.getEmbedding().getMaxRetries());
+            int timeoutSeconds = Math.max(1, properties.getEmbedding().getTimeoutSeconds());
+
+            try {
+                EmbeddingResponse resp = webClient.post()
+                        .uri("/embeddings")
+                        .bodyValue(body)
+                        .retrieve()
+                        .bodyToMono(EmbeddingResponse.class)
+                        .timeout(Duration.ofSeconds(timeoutSeconds))
+                        .retryWhen(Retry.backoff(maxRetries, backoffMin)
+                                .maxBackoff(backoffMax)
+                                .filter(SiliconFlowEmbeddingGateway::isTransient))
+                        .onErrorResume(this::mapToEmbeddingUnavailable)
+                        .block();
+
+                if (resp == null || resp.data == null || resp.data.isEmpty()) {
+                    throw new EmbeddingUnavailableException("SiliconFlow returned empty embedding response");
                 }
-                vectors.add(d.embedding);
+                if (resp.data.size() != texts.size()) {
+                    throw new EmbeddingUnavailableException(
+                            "SiliconFlow returned " + resp.data.size() + " vectors for " + texts.size() + " inputs");
+                }
+                List<float[]> vectors = new ArrayList<>(resp.data.size());
+                for (EmbeddingData d : resp.data) {
+                    if (d.embedding == null || d.embedding.length != dimension) {
+                        throw new EmbeddingUnavailableException(
+                                "SiliconFlow returned vector of length "
+                                        + (d.embedding == null ? "null" : d.embedding.length)
+                                        + " (expected " + dimension + ")");
+                    }
+                    vectors.add(d.embedding);
+                }
+                log.debug("SiliconFlowEmbeddingGateway fetched {} vectors dim={}", vectors.size(), dimension);
+                return vectors;
+            } catch (EmbeddingUnavailableException ex) {
+                throw ex;
+            } catch (RuntimeException ex) {
+                throw new EmbeddingUnavailableException("SiliconFlow embedding call failed: " + ex.getMessage(), ex);
             }
-            log.debug("SiliconFlowEmbeddingGateway fetched {} vectors dim={}", vectors.size(), dimension);
-            return vectors;
-        } catch (EmbeddingUnavailableException ex) {
-            throw ex;
-        } catch (RuntimeException ex) {
-            throw new EmbeddingUnavailableException("SiliconFlow embedding call failed: " + ex.getMessage(), ex);
+        } finally {
+            sample.stop(Timer.builder("rag.embedding.duration.ms")
+                    .tag("provider", "siliconflow")
+                    .register(meterRegistry));
         }
     }
 
