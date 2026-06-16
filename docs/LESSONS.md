@@ -852,6 +852,117 @@ Items 1-4 are the minimum to call the spec "implemented." Item 5+ is the
 
 ---
 
+## 12. Phase 7 lessons — three concrete patterns hit while shipping clusters 1-3
+
+### 12.1 Cluster 3: Document.documentId encodes kbId — "kbId/documentId" not just "documentId"
+
+`IngestServiceImpl.extractKbId(compositeDocumentId)` does `indexOf('/')` and
+returns the prefix as `kbId`. If you pass `documentId="doc-refund-v1"`, the
+extract returns `"default-kb"` and your `publish()` flips the active index
+for the wrong KB. Your subsequent QA call will get
+`VectorStoreUnavailableException` because `kb-refund` was never published.
+
+**Fix** — encode the kbId into the documentId:
+
+```java
+new Document(
+    tenantId, KB_ID, KB_ID + "/doc-refund-v1", "1",
+    title, sourceUri, ...)
+```
+
+This is a **code smell**: `Document` carries `kbId` as a separate field, but
+`extractKbId()` re-derives it from `documentId` instead of using the field.
+Should be fixed by adding `kbId` to `IngestJob` at job-creation time so the
+publish path doesn't need to re-parse. Tracked as a P2 follow-up — out of
+scope for cluster 3 which is just the eval test.
+
+### 12.2 Cluster 3: Stub gateway (16-dim) is incompatible with production index (1024-dim)
+
+`StubEmbeddingGateway.DIM = 16` but `RedisIndexManager.DEFAULT_DIM = 1024`.
+The plan §3.2 said "use stub gateway" — that would have crashed RediSearch
+on the first `FT.ADD` because the vector width didn't match the schema.
+
+The eval test **must** use real SiliconFlow embedding. Gate it with
+`@EnabledIfEnvironmentVariable("SILICONFLOW_API_KEY", ".+")` so it skips
+gracefully when no key is set. The plan got this wrong; we caught it
+during plan-vs-reality sweep because `StubEmbeddingGateway.DIM` was
+visibly 16 in the source.
+
+**Lesson**: any time an eval test touches the vector store, it needs
+production-dim embeddings. The stubs are for unit tests that don't
+go near RediSearch.
+
+### 12.3 Cluster 3: Cross-module `@SpringBootTest` needs `classes =` for sibling modules
+
+`@SpringBootTest` does classpath scanning by default — looks for a
+`@SpringBootConfiguration` in the same module. When the test lives in
+`rag-test` but the `RagAppApplication` lives in `rag-app`, the scanner
+finds nothing and fails with:
+
+```
+java.lang.IllegalStateException: Unable to find a @SpringBootConfiguration,
+you need to use @ContextConfiguration or @SpringBootTest(classes=...) with your test
+```
+
+**Fix** — explicitly point at the app class:
+
+```java
+@SpringBootTest(classes = RagAppApplication.class, ...)
+```
+
+The existing tests in `rag-app/src/test/...` don't need this because the
+scanner finds `RagAppApplication` automatically within the same module.
+
+### 12.4 Cluster 1/3: Spring Boot fat-jar shutdown reports `NoClassDefFoundError: ThrowableProxy`
+
+When you `kill <pid>` (SIGTERM) a running `java -jar rag-app-*.jar` instance,
+the JVM shuts down via `SpringApplicationShutdownHook`. The shutdown
+sequence triggers a last `log.warn(...)` from a thread whose classloader
+has already been closed by Spring Boot's `LaunchedURLClassLoader`. Logback
+then tries to format the warning and crashes with:
+
+```
+NoClassDefFoundError: ch/qos/logback/classic/spi/ThrowableProxy
+```
+
+This is a **known Spring Boot issue** with fat-jars (the loader closes
+classloaders in a specific order during shutdown that races with logback's
+final flush). It is NOT a bug in our code — the application already
+stopped responding to HTTP at that point.
+
+**Fix options** (none chosen — non-blocking):
+- Run as exploded jar (`java -cp 'libs/*' io.github.yysf1949.rag.app.RagAppApplication`)
+  — works around the race entirely
+- Add `spring-boot-loader-tools` repackaging with `layout = ZIP`
+- Suppress with `-Dlogging.register-shutdown-hook=false` (loses graceful-shutdown logs)
+
+### 12.5 Cluster 2: Micrometer — preserve backward-compat constructors when injecting MeterRegistry
+
+QAServiceImpl went from 9-arg → 10-arg constructor when we added
+`MeterRegistry`. The existing 23-test `QAServiceImplTest` constructs
+`new QAServiceImpl(...)` directly in 4 places. Changing the signature
+breaks every one of them.
+
+**Pattern** — keep the old constructor as a delegate:
+
+```java
+// Production — real MeterRegistry, full metrics
+public QAServiceImpl(..., MeterRegistry meterRegistry) {
+    // store meterRegistry, build counters/timers
+}
+
+// Test — no-op registry, preserves 9-arg call sites
+public QAServiceImpl(...) {  // old signature
+    this(..., new SimpleMeterRegistry());
+}
+```
+
+`SimpleMeterRegistry` is a no-op implementation — perfect for unit tests
+that don't care about metrics. Same pattern used for `IngestServiceImpl`
+(5-arg → 6-arg with `MeterRegistry`).
+
+---
+
 ## Appendix: Common dotenv pitfalls
 
 | Anti-pattern | Why it's bad | Correct |
