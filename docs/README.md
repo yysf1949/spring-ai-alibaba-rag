@@ -58,3 +58,16 @@ real SiliconFlow adapters override the stubs. Defaults (see `rag-embedding/.env.
 
 To enable: copy `rag-embedding/.env.example` → `rag-embedding/.env`, fill in your key,
 then `set -a; source rag-embedding/.env; set +a` before `mvn spring-boot:run`.
+
+### Verified against real SiliconFlow (2026-06-17)
+
+Run `mvn -pl rag-embedding test -Dtest=SiliconFlowIT` with `SILICONFLOW_API_KEY`
++ `SILICONFLOW_IT=1` set. Last verification (5 tests, 4.5s):
+
+| IT | Result |
+|---|---|
+| `embedding_bgeM3_returns1024dimVectors` | ✅ 1024-dim, non-zero magnitudes |
+| `embedding_similarity_ordersAsExpected` | ✅ refund-doc > weather-doc by ≥ 0.05 cosine |
+| `rerank_bgeReranker_reordersCorrectly` | ✅ top-1 is refund-related chunk |
+| `llm_qwen7B_respondsInChinese` | ✅ Qwen2.5-7B: "Spring Boot 是一种用于简化 Spring 应用 开发的框架" |
+| `embedding_badKey_401_throwsUnavailable` | ✅ 401 → EmbeddingUnavailableException (no retry) |
