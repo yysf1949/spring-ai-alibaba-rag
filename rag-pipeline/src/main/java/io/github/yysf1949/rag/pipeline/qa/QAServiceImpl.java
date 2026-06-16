@@ -271,6 +271,12 @@ public class QAServiceImpl implements QAService {
             MDC.remove(PipelineMdc.KEY_STAGE);
         }
 
+        // Spec §9.1 — rag.qa.retrieved.chunks.count
+        Counter.builder("rag.qa.retrieved.chunks.count")
+                .tag("tenant", query.tenantId())
+                .register(meterRegistry)
+                .increment(retrieved.size());
+
         // Step 5: rerank (with fallback on failure)
         long rerankStart = System.currentTimeMillis();
         PipelineMdc.put(PipelineMdc.KEY_STAGE, "rerank");
@@ -292,6 +298,10 @@ public class QAServiceImpl implements QAService {
             stageTimers.get("rerank").record(stamps[4], TimeUnit.MILLISECONDS);
             MDC.remove(PipelineMdc.KEY_STAGE);
         }
+
+        // TODO(cluster6): rag.qa.rerank.delta.score{tenant} requires RerankService score-bearing response
+        // The SiliconFlow rerank API returns relevance_score but the current
+        // RerankService interface discards it. Revisit after interface extension.
 
         // Empty retrieval → graceful "I don't know" with hot questions.
         if (reranked.isEmpty()) {
@@ -319,6 +329,13 @@ public class QAServiceImpl implements QAService {
             stageTimers.get("assemble").record(stamps[5], TimeUnit.MILLISECONDS);
             MDC.remove(PipelineMdc.KEY_STAGE);
         }
+
+        // Spec §9.1 — rag.qa.context.tokens
+        meterRegistry.gauge(
+                "rag.qa.context.tokens",
+                Tags.of("tenant", query.tenantId()),
+                assembled,
+                AssembledPrompt::promptTokens);
 
         // Step 7: generate (with fallback on LLM failure)
         long generateStart = System.currentTimeMillis();
