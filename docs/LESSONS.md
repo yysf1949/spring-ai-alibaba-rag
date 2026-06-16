@@ -409,6 +409,449 @@ To ingest new data at runtime, either:
 
 ---
 
+## 9. Spring Boot bean configuration traps
+
+### 9a. Duplicate `SiliconFlowProperties` registration
+
+**Symptom**: ApplicationContext starts with two `SiliconFlowProperties` beans
+(one from `@EnableConfigurationProperties` on the class, one from a redundant
+`@Bean siliconFlowProperties()` method). Spring throws `BeanDefinitionOverrideException`
+or silently keeps one.
+
+**Root cause**: I wrote both:
+
+```java
+@Configuration
+@EnableConfigurationProperties(SiliconFlowProperties.class)   // ← registers bean A
+public class SiliconFlowAutoConfiguration {
+    @Bean
+    public SiliconFlowProperties siliconFlowProperties() {    // ← registers bean B
+        return new SiliconFlowProperties();
+    }
+}
+```
+
+Spring Boot 2.1+ allows this when `spring.main.allow-bean-definition-overriding=true`,
+but it's a code smell. The `@Bean` method is redundant and shadows the
+auto-config-registered one.
+
+**Fix**: Delete the `@Bean` method. `@EnableConfigurationProperties` is sufficient.
+
+**Lesson**: Pick one mechanism. Either
+- `@EnableConfigurationProperties(Foo.class)` + the class is auto-registered
+- `@ConfigurationProperties` + `@ConfigurationPropertiesScan` (component scan)
+- `@Bean` factory method
+
+Mixing them is a debugging rabbit hole.
+
+### 9b. `@ConditionalOnMissingBean` lets stubs win the race
+
+**Symptom**: SiliconFlow adapters don't activate even though `rag.siliconflow.enabled=true`
+and the key is set. The runtime beans are the **stub** implementations (16-dim embeddings).
+
+**Root cause**: This pattern on the SiliconFlow beans:
+
+```java
+@Bean
+@ConditionalOnMissingBean(EmbeddingGateway.class)   // ← "only register if no bean exists"
+public EmbeddingGateway siliconFlowEmbeddingGateway(...) { ... }
+```
+
+The `EmbeddingStubConfig` in `rag-app` was already creating a stub `EmbeddingGateway`
+bean unconditionally. `@ConditionalOnMissingBean` saw the stub and **skipped**
+the SiliconFlow bean. Same race for `RerankService` and `LlmService`.
+
+**Fix**:
+- Remove `@ConditionalOnMissingBean` from individual beans
+- Move the conditional to the **class level** (`@Configuration`):
+  ```java
+  @Configuration
+  @Conditional(SiliconFlowEnabledCondition.class)   // class-level only
+  public class SiliconFlowAutoConfiguration {
+      @Bean
+      @Primary                                      // ← safety belt
+      public EmbeddingGateway siliconFlowEmbeddingGateway(...) { ... }
+  }
+  ```
+- Add `@Primary` on each bean as a belt-and-suspenders measure
+
+**Lesson**: `@ConditionalOnMissingBean` is for "fall back to this default if user
+didn't bring their own." When you want a conditional adapter to **override** existing
+beans, the conditional must be on the `@Configuration` class, not individual beans.
+The semantics invert: class-level = "include this whole config or none of it",
+bean-level = "skip just this one if a peer already exists."
+
+### 9c. `System.getenv()` doesn't propagate to forked JVMs
+
+**Symptom**: `@Conditional` reads `System.getenv("RAG_SILICONFLOW_API_KEY")` and sees
+`null` in the running Spring Boot process — even though `echo $VAR` shows the value
+in the launching shell.
+
+**Root cause**: The launching script does:
+
+```bash
+set -a; source .env; set +a    # exports to current shell
+mvn spring-boot:run             # Maven spawns a forked JVM
+                                # forked JVM inherits env, but if someone runs
+                                # `mvn -pl rag-app` it may not
+```
+
+Some Maven plugins (`maven-toolchains-plugin`, `exec-maven-plugin`, or `spring-boot:run`
+under `-Dfork=false`) launch JVMs without inheriting env vars. `System.getenv()` returns
+null in those cases.
+
+**Fix**: Don't rely on `System.getenv()` in production code. Use Spring's
+`Environment.getProperty()` — it reads from many sources (system env, JVM system
+properties, application.yml, `SPRING_APPLICATION_JSON`, command-line args).
+
+**For tricky envs** (env var not resolving through YAML `${VAR}` placeholder), use
+`SPRING_APPLICATION_JSON` which Spring reads before any other source:
+
+```bash
+export SPRING_APPLICATION_JSON='{"rag":{"siliconflow":{"api-key":"...","enabled":true}}}'
+```
+
+**Lesson**: Spring's property resolution order is your friend — but you need to know it.
+Order (highest to lowest priority): `SPRING_APPLICATION_JSON` > command-line `--key=val` >
+JVM `-Dkey=val` > OS env vars > `application.yml`. Place the value in the highest
+priority that your environment supports.
+
+### 9d. YAML `${VAR:default}` is a literal string if `VAR` is unset
+
+**Symptom**: `env.getProperty("rag.siliconflow.api-key")` returns the literal
+`${SILICONFLOW_API_KEY:}` — including the placeholder syntax — instead of empty
+string or null.
+
+**Root cause**: YAML placeholder `${SILICONFLOW_API_KEY:}` IS the literal value when
+the env var is not set. Spring's `PropertySourcesPropertyResolver` returns the
+unresolved placeholder text. Reading it via `Environment.getProperty()` gives you
+back the placeholder, not null or empty.
+
+**Debug it**:
+```java
+String v = env.getProperty("rag.siliconflow.api-key");
+log.info("raw value=[{}]", v);  // → raw value=[${SILICONFLOW_API_KEY:}]
+log.info("isBlank={}", v == null || v.isBlank());  // → false
+```
+
+**Fix**: Either:
+1. Set the env var so the placeholder resolves
+2. Use a regex or `contains("${")` check to detect unresolved placeholders
+3. Inject `ConfigurableEnvironment` and call `propertyResolver.resolvePlaceholders(...)`
+   explicitly
+
+**Lesson**: YAML placeholder syntax is "best effort" — it does not guarantee the
+env var is set. Always validate placeholder resolution in your `@Conditional`.
+
+### 9e. `List.of(String).contains(enumValue)` is always false
+
+**Symptom**: Test asserts `assertTrue(List.of("LLM").contains(answer.source()))` —
+fails because `Answer.source()` is an `AnswerSource` enum, not a String.
+
+**Root cause**: `List<String>.contains(Object)` calls `equals()`, but the list's
+generic type erasure means the list can hold anything. The enum `AnswerSource.LLM`
+is not equal to the String `"LLM"`.
+
+**Fix**:
+```java
+// ❌ false
+assertTrue(List.of("LLM").contains(answer.source()));
+
+// ✅ true
+assertEquals(AnswerSource.LLM, answer.source());
+
+// ✅ if you need a List
+assertTrue(List.of(AnswerSource.LLM).contains(answer.source()));
+```
+
+**Lesson**: Be explicit about types in tests. When the production code returns
+an enum, assert against the enum value, not its `.name()` string.
+
+---
+
+## 10. Process & environment traps
+
+### 10a. `.env` brace expansion breaks `source`
+
+**Symptom**: `source .env` produces
+```
+{siliconflow:: command not found
+```
+
+**Root cause**: Someone wrote the `SPRING_APPLICATION_JSON` line in `.env` like:
+```
+SPRING_APPLICATION_JSON={siliconflow:{...}}
+```
+Bash's `source` doesn't parse `.env` files — it executes them as shell scripts. The
+`{siliconflow:...}` triggers bash's brace expansion: it tries to run a command
+called `siliconflow:` and gets `command not found`.
+
+**Fix**: Quote the JSON value so bash doesn't try to expand braces:
+```
+SPRING_APPLICATION_JSON='{"siliconflow":{"enabled":true,"api-key":"sk-..."}}'
+```
+
+**Lesson**: The `.env` file format is a de-facto standard that **most loaders** (Python
+`dotenv`, Node `dotenv`, Ruby) parse with `KEY=VALUE` rules. But **bash `source` is not
+a `.env` loader** — it executes the file as shell. Always quote values containing
+shell metacharacters (`{`, `}`, `$`, `` ` ``, `;`, `&`, `|`, `<`, `>`).
+
+**Safer pattern**:
+```bash
+# Use a real dotenv loader:
+set -a
+eval "$(cat .env | sed 's/^/export /' | sed 's/=/="/' | sed 's/$/"/')"
+set +a
+```
+Or use a tool like `direnv` / `dotenv` / `python-dotenv` CLI.
+
+### 10b. Two main classes = Maven "Unable to find a single main class"
+
+**Symptom**:
+```
+[ERROR] Unable to find a single main class from the following candidates
+    [RagAppApplication, IngestRunner]
+```
+
+**Root cause**: Two classes in the same module carry `@SpringBootApplication` +
+`main()`. The `spring-boot-maven-plugin` repackage step can't pick one.
+
+**Fix**: Either:
+- Delete one of the main classes (preferred when one is throwaway)
+- Specify the main class explicitly in the POM:
+  ```xml
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>io.github.yysf1949.rag.app.RagAppApplication</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+  ```
+
+**Lesson**: A multi-module project may have multiple `@SpringBootApplication` classes
+across modules (e.g., a test app + a real app), but **never two in the same module**
+unless they're in different source roots (`src/main` vs `src/test`).
+
+### 10c. Port already in use — Hermes bridge vs Spring Boot
+
+**Symptom**: Spring Boot starts then exits:
+```
+Web server failed to start. Port 8080 was already in use.
+```
+
+**Root cause**: Another process owns port 8080. In this environment, the Hermes
+`bridge` process listens on 8080 for the web gateway.
+
+**Fix**: Pick a different port. Convention in this workspace:
+- 18081 — Spring Boot rag-app (siliconflow)
+- 8080 — Hermes bridge (do not touch)
+
+```bash
+# Either:
+java -jar app.jar --server.port=18081
+# Or via env:
+export SERVER_PORT=18081
+# Or via Spring's config:
+mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=18081"
+```
+
+**Lesson**: `ss -tlnp` (or `netstat -tlnp`) before binding. Add a port-conflict
+detection in your startup script:
+```bash
+if ss -tln | grep -q ":$PORT "; then
+    echo "Port $PORT already in use:"
+    ss -tlnp | grep ":$PORT "
+    exit 1
+fi
+```
+
+### 10d. IngestRunner in `src/test/java` isn't compiled into the JAR
+
+**Symptom**: After writing `IngestRunner.java` in `rag-app/src/test/java/...`,
+`mvn spring-boot:run` doesn't see it.
+
+**Root cause**: `src/test/java` is only compiled during the `test` phase, never
+included in the production JAR. Use `src/main/java` for any class that must be
+runnable via `mvn` or `java -jar`.
+
+**Fix**: Move to `src/main/java/...`. If the class is one-shot, mark it clearly.
+
+**Lesson**: Source root = scope:
+- `src/main/java` — production code, packaged in JAR
+- `src/test/java` — test code, not in JAR
+- `src/main/resources` — config / templates / static
+- `src/test/resources` — test-only resources
+
+### 10e. `parseKbVersion` time-based version, not literal `1`
+
+**Symptom**: `IngestRunner` hard-codes `version = "1"` for the document. The
+`publish` step throws `VectorStoreUnavailableException` because the active index
+expects version 3 (computed from the current date).
+
+**Root cause**: `parseKbVersion` derives a version number from the current date
+(some pattern like `(epochDay - baseline) / interval` or similar). Ingest writes
+chunks with `documentVersion = "1"`, but the publish step looks for
+`rag:index:{tenant}:3` (the version `parseKbVersion` computed from today's date).
+
+The two paths must agree on the version. The chunk's `documentVersion` and the
+target index version must match.
+
+**Fix**: Compute the version in `IngestRunner` using the same logic as
+`parseKbVersion`, then pass it as the document's version.
+
+**Or simpler**: Use a high, fixed version that the publish step won't conflict
+with (e.g., `5L`), and set `rag:publish:{tenant}:{kbId}` to that version after
+publish. This is acceptable for dev/test, not production.
+
+**Lesson**: Versioning schemes that depend on a clock create hidden coupling.
+Two code paths that produce the "same" logical value from different inputs will
+drift. Document the version-generation function as part of the public API.
+
+### 10f. Embedding dim mismatch — stub 16-dim, index 1536-dim
+
+**Symptom**:
+```
+Could not add vector with blob size 64 (expected size 6144)
+```
+(64 = 16 floats × 4 bytes; 6144 = 1536 floats × 4 bytes)
+
+**Root cause**: The HNSW index was created with `dim=1536` (production default
+for DashScope), but the stub embedding gateway returns 16-dim vectors. RediSearch
+rejects the dimension mismatch on HSET.
+
+**Fix**: Parameterize the index dim from `spring.rag.embedding.dim`:
+- Default: 16 (matches stub)
+- Override in `application.yml` or `SPRING_RAG_EMBEDDING_DIM` env var: 1024 (bge-m3),
+  1536 (DashScope text-embedding-v3)
+
+```java
+RedisIndexManager.DEFAULT_DIM = env.getProperty("spring.rag.embedding.dim", Integer.class, 16);
+```
+
+**Lesson**: Always derive vector index parameters from the actual embedding model.
+Hard-coding production numbers and overriding them in dev is a classic source
+of "works on my machine" bugs.
+
+### 10g. `extractKbId` fallback to `default-kb` breaks kbId-specific queries
+
+**Symptom**: Test queries for `kbId="kb-it"` return 0 results because the
+ingest path wrote to `default-kb`.
+
+**Root cause**: The `extractKbId` helper splits `documentId` on `/` to get the
+kbId. When the input has no `/`, it falls back to `"default-kb"`. Test data
+that uses `"kb-it"` (no `/`) gets routed to `default-kb` instead of the intended
+`kb-it`. The test then queries for `kb-it` and finds nothing.
+
+**Fix**: Test data must use the format `kb-id/some-doc-id` (e.g., `"kb-it/doc-it"`).
+
+**Lesson**: Defaults that "do something sensible" can hide intent. Either:
+- Make the default explicit (require a kbId parameter)
+- Or change the parser to fail loudly on missing separator
+
+### 10h. `Allow bean definition overriding` set to true in dev — dangerous
+
+**Symptom**: With `spring.main.allow-bean-definition-overriding=true` (often the
+default in `spring-boot-devtools` or older Spring Boot 2.x), duplicate bean
+definitions silently overwrite each other instead of throwing.
+
+**Root cause**: Production should NOT allow this. In dev, you can debug faster
+because you don't see the override error.
+
+**Fix**: Set explicitly:
+```yaml
+spring:
+  main:
+    allow-bean-definition-overriding: false   # default in Spring Boot 2.1+
+```
+
+Or in `application.yml` for tests only.
+
+**Lesson**: "Fail fast" is the right default. If you have a configuration conflict,
+you want Spring to tell you at startup, not silently use the last-defined bean
+and surprise you at runtime.
+
+---
+
+## 11. Spec vs implementation gap
+
+Cross-referencing the design spec ([`2026-06-16-spring-ai-alibaba-rag-design.md`](./superpowers/specs/2026-06-16-spring-ai-alibaba-rag-design.md))
+against the current code, these are the gaps at the time of writing this document:
+
+### ✅ Spec sections fully implemented
+
+| Spec § | Description | Status |
+|---|---|---|
+| §2 | Tech stack (Spring Boot 3.3, Java 21, Redis Stack 7.4) | ✅ |
+| §5.1 | Redis key naming (`rag:chunk:*`, `rag:index:*`, `rag:active:*`, `rag:publish:*`) | ✅ |
+| §5.2 | Chunk metadata schema (HASH fields, TAG/NUMERIC/VECTOR types) | ✅ |
+| §5.3 | HNSW params (M=16, EF_CONSTRUCTION=200, EF_RUNTIME=10, COSINE) | ✅ |
+| §6.2 | ChunkSplitter (sliding window, 200-800 tokens, 50 overlap) | ✅ |
+| §7 | QAService 8-step chain | ✅ |
+| §7.2 | RuleBasedQueryRewriter | ✅ |
+| §7.3 | RerankService interface + impl (stub + SiliconFlow) | ✅ |
+| §7.4 | ContextAssembler (token budget, PII redaction, metadata preservation) | ✅ |
+| §7.5 | 7-tier degradation ladder | ✅ |
+| §8 | Multi-tenant + permission filter | ✅ |
+| §8.3 | PII redaction (Chinese ID, mobile, bank card Luhn) | ✅ |
+| §10 | Error handling (exceptions → HTTP status) | ✅ (handlers) |
+| §13.12 | REST endpoint `POST /api/qa` with OpenAPI 3 + RFC 7807 | ✅ |
+
+### ⚠️ Spec sections partially implemented
+
+| Spec § | Description | Status | Gap |
+|---|---|---|---|
+| §6.1 | Async ingest with staging + publish | ⚠️ partial | `IngestService.ingestAsync` exists, but no HTTP endpoint exposes it; in-memory `IngestJobRepositoryImpl` instead of Redis-backed |
+| §7.2 | LLM fallback in QueryRewriter | ⚠️ partial | Only RuleBased; LLM fallback stubbed but not implemented |
+| §9.1 | Micrometer metrics (13 metrics listed) | ⚠️ missing | `Answer.metrics` carries the per-stage timing as a Map, but **no `MeterRegistry` is injected** — metrics are not published to Prometheus. Spec §16 DoD requires `/actuator/prometheus` to expose them. |
+| §9.2 | MDC logging (stage, retrieved, etc.) | ⚠️ partial | `MdcTenantFilter` sets tenantId/userId/sessionId. Stage timings in `Answer.metrics` but **not in MDC** during request handling. |
+| §9.3 | Eval set + offline CI gate | ❌ missing | No `rag-test/src/test/resources/eval/` directory; no `Recall@K` / `Grounded Rate` measurements |
+| §11.2 | Testcontainers integration tests | ⚠️ partial | `RedisVectorStoreSmokeTest` uses `@EnabledIfSystemProperty(named = "runIT")`; 23 tests skip without it. No `RagEndToEndIT` against Testcontainers — current `RagEndToEndIT` uses a hard-coded `localhost:6379` Redis. |
+| §11.3 | Real-case demo (`RefundRuleEndToEndTest`) | ⚠️ partial | IngestRunner deleted (we did the equivalent end-to-end via curl); no automated JUnit test asserting "退款规则问答" returns "运费退还" with `sourceUri` citation |
+| §12.1 | Evolution path: local → production → K8s | ❌ missing | Only local docker-compose; no K8s manifests, no Helm chart, no multi-instance scaling |
+| §12.2 | `docker-compose.yml` with **both** redis and app | ❌ missing | Only redis service; no `app` service, no `build:` directive |
+| §12.3 | K8s probes (liveness/readiness/startup) | ❌ missing | `/actuator/health/liveness` and `/readiness` are exposed by Spring Boot but not exercised; no PodDisruptionBudget, no startup probe config |
+| §15 | Tenant authentication (JWT, gateway trust) | ⚠️ stub | `X-Tenant-Id` header is **trusted as-is** (no signature verification). Suitable for dev only. Production needs JWT or mTLS at the gateway. |
+| §16 | DoD: `mvn clean verify` all green | ✅ | 177 tests + 23 Redis smoke + 1 IT pass |
+| §16 | DoD: `curl -X POST /ingest` | ❌ | No `POST /api/ingest` endpoint exists; ingest is programmatic-only |
+| §16 | DoD: `curl -X POST /qa` returns cited answer | ✅ | Verified end-to-end at `port 18081`; output is via LLM, citation structure present |
+
+### ❌ Spec sections not implemented (Phase 7+ backlog)
+
+| Spec § | Description | Suggested phase |
+|---|---|---|
+| §10 | Resilience4j circuit breaker for Redis + SiliconFlow | Phase 7 (resilience) |
+| §5.1 | `rag:session:{tenant}:{userId}:{sessionId}` conversation summary | Phase 8 (memory) |
+| §5.1 | `rag:metrics:{tenant}:{yyyyMMdd}` daily HINCRBY counter | Phase 7 (metrics) |
+| §11.3 | Automated `RefundRuleEndToEndTest` (real LLM) | Phase 6-D6 (test coverage) |
+| §12.1 | K8s Deployment + Service + Ingress | Phase 7 (deployment) |
+| §12.1 | Multi-instance test (2 app + Sentinel/Cluster Redis) | Phase 7 (HA) |
+| §15 | JWT / OIDC auth, gateway-trust model | Phase 8 (security) |
+| §7.5 | Rate limiting (Redis sliding window) | Phase 7 (rate limit) |
+
+### How to close the gaps
+
+The work in this section is the natural next phase (Phase 7). Prioritization:
+
+1. **`POST /api/ingest` endpoint** — without it, no real ingestion flow possible
+   from outside the JVM. 2-3 hours of work.
+2. **Micrometer metrics** — add `MeterRegistry` bean, inject counters/timers into
+   QAServiceImpl + IngestServiceImpl. 4-6 hours.
+3. **`docker-compose.yml` with app + redis** — small change, big quality-of-life
+   win. 1 hour.
+4. **`RefundRuleEndToEndTest`** — single test class that does ingest + query +
+   asserts "运费退还" substring. 2 hours.
+5. **K8s manifests** — Deployment + Service + ConfigMap + Secret. 4-6 hours.
+
+Items 1-4 are the minimum to call the spec "implemented." Item 5+ is the
+"production-ready" follow-up.
+
+---
+
 ## Appendix: Common dotenv pitfalls
 
 | Anti-pattern | Why it's bad | Correct |
