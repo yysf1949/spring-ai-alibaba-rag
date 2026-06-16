@@ -1198,10 +1198,117 @@ silent failure).
 
 ## Appendix: Common dotenv pitfalls
 
-| Anti-pattern | Why it's bad | Correct |
+|| Anti-pattern | Why it's bad | Correct |
 |---|---|---|
-| `export KEY=VALUE` | `export` is shell syntax, not dotenv. Some loaders tolerate it; others break | `KEY=VALUE` |
-| `export KEY` (bare, no value) | Sets variable to empty string, may shadow the real `KEY=VALUE` on next line | remove the line entirely |
-| `KEY = VALUE` (spaces around `=`) | Dotenv spec says no spaces. Value includes the space | `KEY=VALUE` |
-| `KEY=VALUE # comment` | Comment may be parsed as part of the value | put comments on their own line `# comment` |
-| Committing `.env` | Credential leak vector | `.env` is gitignored; commit `.env.example` with placeholder values only |
+|| `export KEY=VALUE` | `export` is shell syntax, not dotenv. Some loaders tolerate it; others break | `KEY=VALUE` |
+|| `export KEY` (bare, no value) | Sets variable to empty string, may shadow the real `KEY=VALUE` on next line | remove the line entirely |
+|| `KEY = VALUE` (spaces around `=`) | Dotenv spec says no spaces. Value includes the space | `KEY=VALUE` |
+|| `KEY=VALUE # comment` | Comment may be parsed as part of the value | put comments on their own line `# comment` |
+|| Committing `.env` | Credential leak vector | `.env` is gitignored; commit `.env.example` with placeholder values only |
+
+---
+
+## 13. Phase 7 lessons — Cluster 6 (metrics + eval)
+
+### 13.1 Gauge per-tenant dynamic tag — each call creates a new gauge
+
+`meterRegistry.gauge("rag.qa.cache.hit.ratio", Tags.of("tenant", tenantId), obj, toValue)`
+captures the `Tags.of(...)` at registration time. Each `answer()` call registers a new
+gauge with a different tenant tag. This is **intentionally best-effort** — gauges are
+wrapped in `try/catch(RuntimeException)` so a registration failure doesn't break the
+QA chain. In production with N tenants, N gauges will accumulate. This is acceptable
+for a low-cardinality label (tenant is a small set), but if tenant count grows to
+hundreds, consider:
+- Using a `Timer` with `record(...)` instead of `gauge()` for rate-based metrics
+- Or using `FunctionTimer`/`FunctionCounter` with a `ConcurrentHashMap<tenant, LongAdder>`
+
+### 13.2 Timer.Sample nested try/finally — existing try/catch must be inside
+
+When adding a Timer to a method that already has a `try/catch` for exceptions
+(e.g., `VectorStore.search()` catches `Exception` and throws `VectorStoreUnavailableException`),
+the new Timer.Sample must wrap the **entire** method body, with the existing try/catch
+nested inside:
+
+```java
+public List<Chunk> search(...) {
+    Timer.Sample sample = Timer.start(meterRegistry);
+    try {
+        // validation
+        try {
+            // existing logic
+            return result;
+        } catch (Exception e) {
+            throw new VectorStoreUnavailableException(...);
+        }
+    } finally {
+        sample.stop(Timer.builder("rag.redis.hnsw.search.ms")
+                .tag("tenant", tenantId)
+                .register(meterRegistry));
+    }
+}
+```
+
+The `finally` must be outermost so the timer records even when the inner try/catch
+re-throws a different exception.
+
+### 13.3 Micrometer dependency missing in rag-redis
+
+`rag-redis` module didn't have `micrometer-core` in its pom.xml. The Timer usage
+in `RedisVectorStore` required it. Fix: add the dependency explicitly:
+
+```xml
+<dependency>
+    <groupId>io.micrometer</groupId>
+    <artifactId>micrometer-core</artifactId>
+</dependency>
+```
+
+The parent pom (spring-boot-starter-parent) manages the version via dependency management,
+but `rag-redis` doesn't depend on `spring-boot-starter` directly, so the version isn't
+inherited transitively through the module.
+
+### 13.4 Eval fixture JSON schema vs Java record
+
+`EvalFixture` is a Jackson-deserializable record. The JSON fixture schema must match
+exactly:
+- Field names use `@JsonProperty` annotations (e.g., `_comment`, `kbId`, `expectedChunkIds`)
+- Nested records (`EvalDocument`, `EvalSection`, `EvalQuery`, `EvalExpected`)
+- `expectedChunkIds` is `null` in some fixtures → must be handled as empty list in test
+- `permissionTags` at the top level must be a list, not a string
+
+### 13.5 EvalSuiteTest gating — three env vars required
+
+`EvalSuiteTest` is gated by three `@EnabledIfEnvironmentVariable` annotations:
+- `SILICONFLOW_API_KEY` — needed for real embedding (stub 16-dim doesn't match Redis HNSW 1024-dim)
+- `RAG_REDIS_HOST` — points at a reachable Redis Stack
+- `EVAL_SUITE` — extra opt-in so it doesn't run on every CI invocation
+
+All three must be set (non-empty) for the test to run. If any is missing, the test
+is **automatically skipped** — no false failures.
+
+### 13.6 EvaluationService handles empty expectedChunkIds gracefully
+
+When `expectedChunkIds` is empty or null, `recallAtK` defaults to 1.0 (no expectation
+to fail). This is intentional — some fixtures only assert on `mustContainSubstring`
+and `mustContainSourceUri`, not on specific chunk IDs. The `groundedRate` metric
+is the primary pass/fail gate in those cases.
+
+### 13.7 Eval report output path
+
+`EvalSuiteTest` writes `eval-report.json` to:
+1. `eval.output.dir` system property (set by the `eval` Maven profile)
+2. Fallback to `EVAL_OUTPUT_DIR` env var
+3. Fallback to `docs/eval`
+
+The `eval` profile in `pom.xml` sets `eval.output.dir` to `${project.basedir}/../docs/eval`,
+which resolves to the project root's `docs/eval/` directory.
+
+---
+
+## Appendix: Eval toolchain quick reference
+
+| Command | Purpose |
+|---|---|
+| `mvn test -Peval -pl rag-test` | Run EvalSuiteTest (requires env vars) |
+| `SILICONFLOW_API_KEY=xxx RAG_REDIS_HOST=localhost EVAL_SUITE=1 mvn test -Peval -pl rag-test` | Run with real SiliconFlow + Redis |
+| `cat docs/eval/eval-report.json` | View last run results |
