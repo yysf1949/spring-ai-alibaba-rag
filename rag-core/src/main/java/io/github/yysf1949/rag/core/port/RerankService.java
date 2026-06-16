@@ -28,4 +28,19 @@ public interface RerankService {
      * @return reranked chunks, length {@code min(topN, candidates.size())}
      */
     List<Chunk> rerank(String query, List<Chunk> candidates, int topN);
+
+    /**
+     * Rerank and return scores alongside the chunks.
+     * The default implementation wraps {@link #rerank} and assigns 0.0 to all scores.
+     *
+     * @param query      rewritten query text
+     * @param candidates retrieval pool from {@link VectorStore#search}
+     * @param topN       size to return
+     * @return scored rerank results, length {@code min(topN, candidates.size())}
+     */
+    default List<RerankResult> rerankWithScores(String query, List<Chunk> candidates, int topN) {
+        return rerank(query, candidates, topN).stream()
+                .map(c -> new RerankResult(c, 0.0))
+                .toList();
+    }
 }

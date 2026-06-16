@@ -1,6 +1,7 @@
 package io.github.yysf1949.rag.embedding.siliconflow;
 
 import io.github.yysf1949.rag.core.model.Chunk;
+import io.github.yysf1949.rag.core.port.RerankResult;
 import io.github.yysf1949.rag.core.port.RerankService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,7 +99,7 @@ public class SiliconFlowRerankService implements RerankService {
             }
 
             List<Chunk> out = new ArrayList<>(resp.results.size());
-            for (RerankResult r : resp.results) {
+            for (ApiRerankResult r : resp.results) {
                 if (r.index < 0 || r.index >= candidates.size()) {
                     log.warn("SiliconFlowRerankService: out-of-range index={} poolSize={} — skipping", r.index, candidates.size());
                     continue;
@@ -129,6 +130,71 @@ public class SiliconFlowRerankService implements RerankService {
         return true;
     }
 
+    @Override
+    public List<RerankResult> rerankWithScores(String query, List<Chunk> candidates, int topN) {
+        if (candidates == null || candidates.isEmpty() || topN <= 0) {
+            return List.of();
+        }
+
+        List<String> documents = new ArrayList<>(candidates.size());
+        for (Chunk c : candidates) {
+            documents.add(c.content() == null ? "" : c.content());
+        }
+
+        RerankRequest body = new RerankRequest();
+        body.model = properties.getRerank().getModel();
+        body.query = query;
+        body.documents = documents;
+        body.top_n = Math.min(topN, candidates.size());
+        body.return_documents = false;
+
+        int maxRetries = Math.max(0, properties.getRerank().getMaxRetries());
+        int timeoutSeconds = Math.max(1, properties.getRerank().getTimeoutSeconds());
+
+        try {
+            RerankResponse resp = webClient.post()
+                    .uri("/rerank")
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(RerankResponse.class)
+                    .timeout(Duration.ofSeconds(timeoutSeconds))
+                    .retryWhen(Retry.backoff(maxRetries, backoffMin)
+                            .maxBackoff(backoffMax)
+                            .filter(SiliconFlowRerankService::isTransient))
+                    .block();
+
+            if (resp == null || resp.results == null || resp.results.isEmpty()) {
+                log.warn("SiliconFlowRerankService.rerankWithScores: empty response — degrading");
+                return degradeWithScores(candidates, topN);
+            }
+
+            List<io.github.yysf1949.rag.core.port.RerankResult> out = new ArrayList<>(resp.results.size());
+            for (ApiRerankResult r : resp.results) {
+                if (r.index < 0 || r.index >= candidates.size()) {
+                    log.warn("SiliconFlowRerankService: out-of-range index={} poolSize={} — skipping", r.index, candidates.size());
+                    continue;
+                }
+                double score = r.relevance_score != null ? r.relevance_score : 0.0;
+                out.add(new io.github.yysf1949.rag.core.port.RerankResult(candidates.get(r.index), score));
+            }
+            if (out.isEmpty()) {
+                return degradeWithScores(candidates, topN);
+            }
+            log.debug("SiliconFlowRerankService.rerankWithScores: {} → {} (top_n={})",
+                    candidates.size(), out.size(), body.top_n);
+            return Collections.unmodifiableList(out);
+        } catch (RuntimeException ex) {
+            log.warn("SiliconFlowRerankService.rerankWithScores: call failed — degrading: {}", ex.toString());
+            return degradeWithScores(candidates, topN);
+        }
+    }
+
+    private static List<io.github.yysf1949.rag.core.port.RerankResult> degradeWithScores(List<Chunk> candidates, int topN) {
+        return candidates.subList(0, Math.min(topN, candidates.size())).stream()
+                .map(c -> new io.github.yysf1949.rag.core.port.RerankResult(c, 0.0))
+                .toList();
+    }
+
     // ─── DTOs (SiliconFlow /v1/rerank schema) ────────────────────────
 
     static class RerankRequest {
@@ -141,10 +207,10 @@ public class SiliconFlowRerankService implements RerankService {
 
     static class RerankResponse {
         public String id;
-        public List<RerankResult> results;
+        public List<ApiRerankResult> results;
     }
 
-    static class RerankResult {
+    static class ApiRerankResult {
         public int index;
         public Double relevance_score;
     }

@@ -13,6 +13,8 @@ import io.github.yysf1949.rag.core.port.EmbeddingCache;
 import io.github.yysf1949.rag.core.port.EmbeddingGateway;
 import io.github.yysf1949.rag.core.port.HotQuestionProvider;
 import io.github.yysf1949.rag.core.port.LlmService;
+import io.github.yysf1949.rag.core.port.QAService;
+import io.github.yysf1949.rag.core.port.RerankResult;
 import io.github.yysf1949.rag.core.port.RerankService;
 import io.github.yysf1949.rag.core.port.RewriteService;
 import io.github.yysf1949.rag.core.port.RewriteService.RewriteResult;
@@ -310,6 +312,16 @@ class QAServiceImplMdcTest {
             if (captureMdc != null) captureMdc.accept(MDC.getCopyOfContextMap());
             if (toThrow != null) throw toThrow;
             return candidates.subList(0, Math.min(topN, candidates.size()));
+        }
+        @Override public List<RerankResult> rerankWithScores(String query, List<Chunk> candidates, int topN) {
+            // Do NOT capture MDC — the main rerank() call already did.
+            // Do NOT call rerank() — that would double-invoke the stub.
+            // Just return scored results directly.
+            if (toThrow != null) throw toThrow;
+            List<Chunk> chunks = candidates.subList(0, Math.min(topN, candidates.size()));
+            return chunks.stream()
+                    .map(c -> new RerankResult(c, 0.0))
+                    .toList();
         }
     }
 

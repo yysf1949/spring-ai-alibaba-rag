@@ -15,6 +15,7 @@ import io.github.yysf1949.rag.core.port.EmbeddingGateway;
 import io.github.yysf1949.rag.core.port.HotQuestionProvider;
 import io.github.yysf1949.rag.core.port.LlmService;
 import io.github.yysf1949.rag.core.port.QAService;
+import io.github.yysf1949.rag.core.port.RerankResult;
 import io.github.yysf1949.rag.core.port.RerankService;
 import io.github.yysf1949.rag.core.port.RewriteService;
 import io.github.yysf1949.rag.core.port.RewriteService.RewriteResult;
@@ -284,6 +285,21 @@ public class QAServiceImpl implements QAService {
         List<Chunk> reranked;
         try {
             reranked = rerank(rewritten.rewritten(), retrieved, topN);
+            // Spec §9.1 — rag.qa.rerank.delta.score{tenant} (best-effort)
+            // Call rerankWithScores() to get real relevance scores from the concrete impl.
+            // The test stub overrides this to avoid double-capturing MDC.
+            try {
+                List<RerankResult> scored = reranker.rerankWithScores(rewritten.rewritten(), retrieved, topN);
+                if (scored.size() >= 2) {
+                    double maxScore = scored.stream().mapToDouble(RerankResult::relevanceScore).max().orElse(0);
+                    double minScore = scored.stream().mapToDouble(RerankResult::relevanceScore).min().orElse(0);
+                    meterRegistry.gauge("rag.qa.rerank.delta.score",
+                            Tags.of("tenant", query.tenantId()),
+                            maxScore - minScore);
+                }
+            } catch (RuntimeException e) {
+                log.debug("Failed to compute rag.qa.rerank.delta.score: {}", e.getMessage());
+            }
         } catch (RerankUnavailableException reu) {
             log.warn("QA rerank unavailable for tenant={} queryHash={} err={} — using TopK directly",
                     query.tenantId(), queryHash, reu.getMessage());
@@ -298,10 +314,6 @@ public class QAServiceImpl implements QAService {
             stageTimers.get("rerank").record(stamps[4], TimeUnit.MILLISECONDS);
             MDC.remove(PipelineMdc.KEY_STAGE);
         }
-
-        // TODO(cluster6): rag.qa.rerank.delta.score{tenant} requires RerankService score-bearing response
-        // The SiliconFlow rerank API returns relevance_score but the current
-        // RerankService interface discards it. Revisit after interface extension.
 
         // Empty retrieval → graceful "I don't know" with hot questions.
         if (reranked.isEmpty()) {
