@@ -219,10 +219,10 @@ curl -s http://localhost:18081/actuator/health   # → 200
 curl -s -X POST .../api/qa ...                    # → 200 + answer
 
 # 6. Troubleshoot Redis data
-docker exec rag-redis-stack redis-cli KEYS "rag:*"
-docker exec rag-redis-stack redis-cli FT.SEARCH "rag:active:tenant-A:kb-prod-001" \
-  "@tenantId:{tenant\\-A} @kbId:{kb\\-prod\\-001} @status:{ACTIVE}" LIMIT 0 3
-docker exec rag-redis-stack redis-cli GET "rag:publish:tenant-A:kb-prod-001"
+docker compose exec redis redis-cli KEYS "rag:*"
+docker compose exec redis redis-cli FT.SEARCH "rag:active:tenant-A:kb-prod-001" \
+  "@tenantId:{tenant\-A} @kbId:{kb\-prod\-001} @status:{ACTIVE}" LIMIT 0 3
+docker compose exec redis redis-cli GET "rag:publish:tenant-A:kb-prod-001"
 ```
 
 ### Smoke checklist
@@ -235,6 +235,177 @@ docker exec rag-redis-stack redis-cli GET "rag:publish:tenant-A:kb-prod-001"
 | Publish ptr | `redis-cli GET rag:publish:tenant-A:kb-prod-001` | numeric, matches chunk version |
 | Alias | `redis-cli FT.SEARCH "rag:active:tenant-A:kb-prod-001" "*" LIMIT 0 0` | ≥ 1 result |
 | QA e2e | curl as above | 200, non-empty finalText |
+
+---
+
+## 8. Redis operational pitfalls
+
+This project uses **Redis Stack** (RediSearch module) for the vector store and
+3-tier cache. Several non-obvious issues come up during development and debugging.
+
+### 8a. Container name ≠ Docker Compose service name
+
+The `docker-compose.yml` defines:
+
+```yaml
+services:
+  redis:                          # ← service name
+    container_name: rag-redis     # ← container_name (may be overridden by Compose)
+```
+
+But `docker ps` shows the actual container name as `rag-redis-stack` (Docker Compose
+v2 appends the project directory name). Trying `docker exec rag-redis` fails with:
+
+```
+Error: no container with name or ID "rag-redis" found: no such container
+```
+
+**Fix**: Always use `docker compose ps` to discover the actual container name, or
+use `docker exec $(docker compose ps -q redis) redis-cli PING` to target by service.
+
+**Lesson**: Never hard-code container names in scripts. Use `docker compose exec`
+(the correct Compose command) instead of raw `docker exec`:
+
+```bash
+# ✅ Correct — resolves the real container name automatically
+docker compose exec redis redis-cli PING
+
+# ❌ Fragile — breaks if Compose renames the container
+docker exec rag-redis-stack redis-cli PING
+```
+
+### 8b. TAG field escaping in RediSearch CLI queries
+
+RediSearch TAG fields treat characters like `-`, `.`, `:` as metacharacters.
+When querying ad-hoc via `redis-cli FT.SEARCH`, they must be escaped with `\\-`:
+
+```bash
+# ❌ Fails — '-' in tenant-A is a TAG delimiter
+redis-cli FT.SEARCH "rag:active:tenant-A:kb-prod-001" \
+  "@tenantId:{tenant-A}" LIMIT 0 3
+# → Syntax error at offset 19 near A
+
+# ✅ Works — escape dashes
+redis-cli FT.SEARCH "rag:active:tenant-A:kb-prod-001" \
+  "@tenantId:{tenant\\-A} @kbId:{kb\\-prod\\-001} @status:{ACTIVE}" LIMIT 0 3
+```
+
+The application's `RedisVectorStore.escapeTag()` handles this internally (it
+escapes `-`, `.`, `/`, `:`, `{`, `}`, `|`, `,`, `<`, `>`, ` `). Any manual
+`redis-cli` debugging needs the same escaping.
+
+**Lesson**: Always use `\\-` for TAG values containing hyphens in `redis-cli`.
+When copying filter expressions from application logs, add the escaping manually.
+
+### 8c. Vector index structure
+
+Understanding the Redis key schema is essential for debugging:
+
+| Key pattern | Type | Purpose |
+|---|---|---|
+| `rag:chunk:{tenant}:{chunkId}` | HASH | Chunk data (text, embedding binary, tags) |
+| `rag:index:{tenant}:{version}` | FT.INDEX | RediSearch index for a specific KB version |
+| `rag:index:{tenant}:{version}-staging` | FT.INDEX | Staging index (before publish) |
+| `rag:active:{tenant}:{kbId}` | FT.ALIAS | Alias that always points to the current live index |
+| `rag:publish:{tenant}:{kbId}` | STRING | Current published version number |
+| `rag:cache:tenant:{tenant}:{hash}` | STRING | Answer cache (serialized Answer JSON) |
+| `rag:embedding-cache:{textHash}` | BINARY | Embedding vector cache (float32 array) |
+
+The search flow:
+1. `resolveActiveVersion()` reads `rag:publish:{tenant}:{kbId}` to get the version
+2. The `rag:active:{tenant}:{kbId}` alias resolves to a specific `rag:index:{tenant}:{version}`
+3. The KNN query runs against that index, filtered by the pre-filter
+
+**Quick debug commands**:
+
+```bash
+# List all indices
+redis-cli FT._LIST
+
+# Show index schema + info
+redis-cli FT.INFO "rag:index:tenant-A:5-staging" | head -30
+
+# Count docs in an alias
+redis-cli FT.SEARCH "rag:active:tenant-A:kb-prod-001" "*" LIMIT 0 0
+
+# Check publish pointer
+redis-cli GET "rag:publish:tenant-A:kb-prod-001"
+
+# Dump a specific chunk (text fields only, embedding is binary)
+redis-cli HGETALL "rag:chunk:tenant-A:c78c3cb4..."
+
+# See all cache entries
+redis-cli KEYS "rag:cache:*"
+```
+
+### 8d. `publishedAt: 0` — epoch zero is intentional
+
+Chunks stored in Redis have `publishedAt: 0` (epoch, 1970-01-01). This is not a
+bug — the `publishedAt` field is a numeric timestamp set atomically during publish.
+A value of `0` means the chunk was never explicitly set (legacy data from before
+the publish step started populating this field).
+
+The RediSearch pre-filter `@publishedAt:[-inf now]` includes epoch-zero chunks
+because `0 ≤ now`. This is correct: legacy chunks are always visible.
+
+### 8e. Staging vs Active indices
+
+The two-phase publish workflow (spec §5.2):
+1. **STAGING** chunks are written to `rag:index:{tenant}:{v}-staging`
+2. **Publish** atomically: creates the active index, flips all STAGING chunks
+   to ACTIVE status, swaps the alias, writes the publish pointer
+
+To check staging data before publish:
+```bash
+redis-cli FT.SEARCH "rag:index:tenant-A:5-staging" "*" LIMIT 0 0
+```
+
+### 8f. Common Redis debug checklist
+
+When the QA endpoint returns unexpected results, run these in order:
+
+```bash
+# 1. Is Redis up?
+docker compose exec redis redis-cli PING
+# → PONG
+
+# 2. Is RediSearch loaded?
+docker compose exec redis redis-cli MODULE LIST
+# → 1) name: search, ver: 999999
+
+# 3. Does the alias exist and have data?
+docker compose exec redis redis-cli FT.SEARCH \
+  "rag:active:tenant-A:kb-prod-001" "*" LIMIT 0 0
+# → N (count), not error
+
+# 4. Does the publish pointer match the chunk versions?
+docker compose exec redis redis-cli GET \
+  "rag:publish:tenant-A:kb-prod-001"
+# → Must match documentVersion of chunks in the index
+
+# 5. Can a direct search with the app's own filter find chunks?
+docker compose exec redis redis-cli FT.SEARCH \
+  "rag:active:tenant-A:kb-prod-001" \
+  "@tenantId:{tenant\\-A} @kbId:{kb\\-prod\\-001} \
+   @status:{ACTIVE} @documentVersion:[-inf 5]" \
+  LIMIT 0 3
+# → Returns chunks (may need version ceiling adjustment)
+
+# 6. Are there any cached answers that might return stale data?
+docker compose exec redis redis-cli KEYS "rag:cache:*"
+# → Clear with: redis-cli DEL <key> or redis-cli FLUSHDB (dev only)
+```
+
+### 8g. Ingest without an HTTP endpoint
+
+This project does not expose an ingest HTTP API — data is ingested programmatically
+via `IngestService`. The (now-deleted) `IngestRunner` was a one-shot CLI approach.
+To ingest new data at runtime, either:
+
+- Write a `CommandLineRunner` bean that calls `IngestService.ingestSync()` + `publish()`
+- Add a `POST /api/ingest` endpoint to `RagController`
+- Directly write chunk hashes to Redis and set the publish pointer manually
+  (not recommended — bypasses the embedding pipeline and RediSearch indexing)
 
 ---
 
