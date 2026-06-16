@@ -14,7 +14,8 @@
     <name>rag-app</name>
     <description>
         Spring Boot 3.3 application entry point.
-        - REST controllers: POST /ingest, POST /qa, GET /ingest/{jobId}
+        - REST controllers: POST /api/ingest, GET /api/ingest/{jobId},
+                            POST /api/ingest/{jobId}/publish, POST /api/qa
         - Configuration: Redis, DashScope, Metrics, Multi-tenant filter
         - application.yml (local + docker profiles)
         Design spec §13.12.
