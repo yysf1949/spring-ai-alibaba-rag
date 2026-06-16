@@ -57,9 +57,10 @@ public class RedisAutoConfiguration {
     @ConditionalOnMissingBean
     public RedisIndexManager redisIndexManager(
             RedisConnection connection,
-            @Value("${spring.rag.embedding.dim:16}") int dimension) {
-        // Match the dim used by RedisEmbeddingCache. Stub = 16,
-        // DashScope = 1536 (Phase 5-P4 sets spring.rag.embedding.dim=1536).
+            @Value("${spring.rag.embedding.dim:1024}") int dimension) {
+        // Match the dim used by RedisEmbeddingCache and EmbeddingGateway.
+        // Default = 1024 (SiliconFlow BAAI/bge-m3, Phase 5-P4).
+        // Override via spring.rag.embedding.dim if you swap models.
         return new RedisIndexManager(
                 connection, dimension,
                 RedisIndexManager.DEFAULT_M,
@@ -85,10 +86,10 @@ public class RedisAutoConfiguration {
     @ConditionalOnMissingBean
     public EmbeddingCache redisEmbeddingCache(
             RedisConnection connection,
-            @Value("${spring.rag.embedding.dim:16}") int dimension) {
-        // Embedding dim has to match the gateway's. Stub = 16, DashScope = 1536.
-        // The Phase 5-P4 real DashScope gateway sets spring.rag.embedding.dim=1536
-        // in application-prod.yml and overrides this bean.
+            @Value("${spring.rag.embedding.dim:1024}") int dimension) {
+        // Embedding dim must match the gateway's. Default = 1024
+        // (SiliconFlow BAAI/bge-m3, Phase 5-P4). Override via
+        // spring.rag.embedding.dim to swap models.
         // 7-day TTL: embeddings are stable forever per spec §9.1.
         return new RedisEmbeddingCache(connection, dimension,
                 java.time.Duration.ofDays(7).toSeconds());

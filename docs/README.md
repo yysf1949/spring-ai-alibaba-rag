@@ -18,7 +18,7 @@
 rag-core/         — domain model + ports (no Spring, no Redis, no LLM)
 rag-redis/        — Redis Stack vector store + 3-tier cache
 rag-pipeline/     — orchestrators (IngestService, QAService, ContextAssembler, Rewrite)
-rag-embedding/    — Stub adapters (EmbeddingGateway / RerankService / LlmService) — real DashScope adapter ⛔ blocked on API key
+rag-embedding/    — Stub adapters + SiliconFlow real adapters (EmbeddingGateway / RerankService / LlmService); toggle via `rag.siliconflow.enabled` + `SILICONFLOW_API_KEY`
 rag-app/          — Spring Boot wiring (HTTP, MDC, OpenAPI 3, RFC 7807 errors, e2e test)
 ```
 
@@ -41,6 +41,20 @@ rag-app/          — Spring Boot wiring (HTTP, MDC, OpenAPI 3, RFC 7807 errors,
 | 6-D2+D6. OpenAPI 3 + RFC 7807 problem+json errors | ✅ shipped | `f1b2873` |
 | 6-D5. Refactor: move Embedding/Rerank/LLM stubs out of rag-app → rag-embedding | ✅ shipped | `4898b34` |
 | 6-D4. Redis-backed end-to-end test + RedisAutoConfiguration | ✅ shipped | `38628cf` |
-| 5-P4. DashScope real adapters (EmbeddingGateway / RerankService / LlmService) | ⛔ blocked on API key | — |
+| 5-P4. SiliconFlow real adapters (`BAAI/bge-m3` 1024-dim / `BAAI/bge-reranker-v2-m3` / `Qwen/Qwen2.5-7B-Instruct`) | ✅ shipped | this commit |
 
-**Test count**: 147 tests, all green (`mvn verify`) — 124 pipeline + 9 embedding stub + 6 redis-core + 8 rag-app controller. 23 Redis Stack smoke tests + 1 IT skipped when Redis Stack is unavailable (see RUNBOOK.md).
+**Test count**: 177 tests, all green (`mvn verify`) — 124 pipeline + 22 embedding (9 stub + 13 siliconflow unit) + 6 redis-core + 8 rag-app controller + 17 rag-core. 23 Redis Stack smoke + 1 IT + 5 SiliconFlow IT skipped when upstream unavailable (see RUNBOOK.md / `rag-embedding/.env.example`).
+
+## SiliconFlow adapters (Phase 5-P4)
+
+When `rag.siliconflow.enabled=true` **and** `SILICONFLOW_API_KEY` env var is set, the
+real SiliconFlow adapters override the stubs. Defaults (see `rag-embedding/.env.example`):
+
+| Port | Model | Dim / size |
+|---|---|---|
+| Embedding | `BAAI/bge-m3` | 1024-dim |
+| Rerank | `BAAI/bge-reranker-v2-m3` | pairs with bge-m3 |
+| LLM | `Qwen/Qwen2.5-7B-Instruct` | lowest-cost tier |
+
+To enable: copy `rag-embedding/.env.example` → `rag-embedding/.env`, fill in your key,
+then `set -a; source rag-embedding/.env; set +a` before `mvn spring-boot:run`.

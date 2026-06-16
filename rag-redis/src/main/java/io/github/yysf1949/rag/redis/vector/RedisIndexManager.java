@@ -45,8 +45,8 @@ public class RedisIndexManager {
 
     private static final Logger log = LoggerFactory.getLogger(RedisIndexManager.class);
 
-    /** Default embedding dimension — DashScope text-embedding-v3. */
-    public static final int DEFAULT_DIM = 1536;
+    /** Default embedding dimension — SiliconFlow {@code BAAI/bge-m3} (Phase 5-P4). */
+    public static final int DEFAULT_DIM = 1024;
 
     /** Default HNSW parameters (spec §12.3). */
     public static final int DEFAULT_M = 16;

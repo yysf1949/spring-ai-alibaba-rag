@@ -35,6 +35,10 @@ application-local.yaml
 application-dev.yml
 **/secrets.yml
 **/secrets.yaml
+# rag-embedding env templates: keep the .example, ignore the real .env
+rag-embedding/.env
+# Hermes-managed secrets store
+.hermes/secrets/
 
 # Maven wrapper (we use system maven 3.9.16)
 .mvn/

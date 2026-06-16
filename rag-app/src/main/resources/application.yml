@@ -6,14 +6,14 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 5s
-  # Placeholder DashScope key — required by Spring AI Alibaba auto-config
-  # bean construction, but the rag-app's actual LLM calls are routed
-  # through the stub beans in BeansConfig. Replace with a real key in
-  # Phase 5-P4 when the real DashScopeEmbeddingGateway / LlmService are
-  # implemented.
+  # DashScope key placeholder — required by Spring AI Alibaba auto-config
+  # bean construction, but the rag-app's actual LLM/Embedding/Rerank calls
+  # go through the SiliconFlow adapters (rag-embedding/siliconflow/*) when
+  # rag.siliconflow.api-key is set, otherwise through stubs (rag-embedding/stub/*).
+  # See rag-embedding/.env.example for the SiliconFlow key.
   ai:
     dashscope:
-      api-key: ${DASHSCOPE_API_KEY:stub-key-replace-in-5-p4}
+      api-key: ${DASHSCOPE_API_KEY:stub-key-not-used-when-siliconflow-enabled}
       embedding:
         options:
           model: text-embedding-v3
@@ -46,3 +46,35 @@ logging:
 # Spec §9.1: rag.qa.* / rag.ingest.* etc. land in the metric-wiring
 # phase. For now Spring Boot's auto-publish of jvm.*, http.server.*
 # and the actuator's own /actuator/prometheus are available.
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 5-P4 — SiliconFlow adapters (real Embedding / Rerank / LLM)
+# ─────────────────────────────────────────────────────────────────
+# When rag.siliconflow.enabled=true AND rag.siliconflow.api-key is set,
+# the SiliconFlow adapters (rag-embedding/siliconflow/*) override the
+# stub beans. If the key is missing or the flag is false, the stubs run.
+#
+# rag.siliconflow.api-key MUST be supplied via env var SILICONFLOW_API_KEY
+# (see rag-embedding/.env.example) — never commit a real key to YAML.
+rag:
+  siliconflow:
+    enabled: ${RAG_SILICONFLOW_ENABLED:false}
+    api-key: ${SILICONFLOW_API_KEY:}
+    base-url: ${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
+    embedding:
+      model: ${SILICONFLOW_EMBEDDING_MODEL:BAAI/bge-m3}
+      dimension: ${SILICONFLOW_EMBEDDING_DIM:1024}
+      timeout-seconds: 30
+      max-retries: 2
+    rerank:
+      model: ${SILICONFLOW_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
+      timeout-seconds: 30
+      max-retries: 1
+    llm:
+      model: ${SILICONFLOW_LLM_MODEL:Qwen/Qwen2.5-7B-Instruct}
+      timeout-seconds: 60
+      max-retries: 1
+      max-tokens: 2048
+      temperature: 0.2
+  embedding:
+    dim: ${SILICONFLOW_EMBEDDING_DIM:1024}

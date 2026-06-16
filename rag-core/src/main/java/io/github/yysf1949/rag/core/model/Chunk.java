@@ -8,7 +8,7 @@ import java.util.UUID;
  * A single retrieval unit — typically 200-800 tokens of structured text.
  *
  * <p>Design spec §4 + §13.4 — fields are immutable. {@code embedding} is
- * a primitive {@code float[]} (1536 dim for DashScope text-embedding-v3).</p>
+ * a primitive {@code float[]} (1024 dim for SiliconFlow BAAI/bge-m3).</p>
  *
  * <p>Indexes over a chunk MUST filter on (tenantId, kbId, kbVersion, status=ACTIVE,
  * permissionTags). See {@link io.github.yysf1949.rag.core.port.VectorStore}.</p>

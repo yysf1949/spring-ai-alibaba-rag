@@ -23,8 +23,8 @@
 | 构建 | Maven | 3.9.x（自装） | user 决策 |
 | 框架 | Spring Boot | 3.3.x | 与 Spring AI 1.0.x 兼容 |
 | AI 框架 | Spring AI Alibaba | 1.0.x-M6+ | 含 DashScope Starter / Vector Store |
-| Embedding | DashScope text-embedding-v3 | 1536 维 | 文章 §13.1 默认 |
-| LLM | DashScope qwen-plus / qwen-max | — | 文章 §13.11 |
+| Embedding | SiliconFlow `BAAI/bge-m3` | 1024 维 | SiliconFlow OpenAI-compatible `/v1/embeddings`; switched from DashScope text-embedding-v3 in Phase 5-P4 |
+| LLM | SiliconFlow `Qwen/Qwen2.5-7B-Instruct` (OpenAI-compatible `/v1/chat/completions`) | — | 7B = lowest-cost tier on SiliconFlow; spec §13.11 |
 | 向量库 | Redis Stack | 7.4+ | 含 `redisearch` 模块，支持 HNSW |
 | 缓存 | Redis（同上） | — | answer-cache / rewrite-cache / embedding-cache |
 | 测试 | JUnit 5 + Mockito + Testcontainers | — | Redis Stack 用 Testcontainers |
