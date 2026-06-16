@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: spring-ai-alibaba-rag
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 5s
+  # Placeholder DashScope key — required by Spring AI Alibaba auto-config
+  # bean construction, but the rag-app's actual LLM calls are routed
+  # through the stub beans in BeansConfig. Replace with a real key in
+  # Phase 5-P4 when the real DashScopeEmbeddingGateway / LlmService are
+  # implemented.
+  ai:
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:stub-key-replace-in-5-p4}
+      embedding:
+        options:
+          model: text-embedding-v3
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{tenant:-},%X{requestId:-}] %logger{36} - %msg%n"
+  level:
+    io.github.yysf1949.rag: INFO
+    org.springframework.web: INFO
+
+# Spec §9.1: rag.qa.* / rag.ingest.* etc. land in the metric-wiring
+# phase. For now Spring Boot's auto-publish of jvm.*, http.server.*
+# and the actuator's own /actuator/prometheus are available.
