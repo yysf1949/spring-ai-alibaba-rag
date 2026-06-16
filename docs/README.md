@@ -3,6 +3,7 @@
 | File | Audience | What it covers |
 |---|---|---|
 | [RUNBOOK.md](./RUNBOOK.md) | Operator | Local boot · docker-compose · smoke test · troubleshooting |
+| [LESSONS.md](./LESSONS.md) | Developer | Real issues + root causes + deployment checklist (dev diary) |
 | [METRICS.md](./METRICS.md) | Operator / SRE | All Prometheus metrics exposed by the pipeline (spec §9.1) |
 | [MULTI_TENANT.md](./MULTI_TENANT.md) | Operator / product | Tenant contract · permission model · PII redaction (spec §8, §15.3) |
 
