@@ -1,0 +1,61 @@
+# ── Build artifacts ─────────────────────────────────────────────────────
+# These are produced by `mvn package` inside the build stage — never
+# copy them in from the host (saves bandwidth + avoids stale jars).
+# EXCEPT .docker-maven/ which contains the Maven runtime jars we need
+# to COPY into the build stage (see Dockerfile).
+**/target/
+**/build/
+**/out/
+**/*.class
+**/*.jar
+!/.docker-maven/**/*.jar
+
+# ── Test-only module ────────────────────────────────────────────────────
+# rag-test is a sibling module consumed only by `mvn verify`. We still
+# COPY it into the build context because Maven needs the module dir to
+# exist at POM-parse time (parent pom lists <module>rag-test</module>).
+# It's then excluded from the reactor via `-pl rag-app,!rag-test`.
+
+# ── IDE / OS junk ───────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+
+# ── VCS ─────────────────────────────────────────────────────────────────
+# (Uncomment the next line if your .git is huge — usually it isn't.)
+# .git/
+
+# ── Secrets / local env ─────────────────────────────────────────────────
+# CRITICAL — never bake credentials into an image layer.
+.env
+.env.local
+.env.*
+**/.env
+**/.env.*
+
+# ── Runtime artifacts ────────────────────────────────────────────────────
+*.log
+logs/
+nohup.out
+.hermes/
+.agents/
+
+# ── Documentation that bloats context ───────────────────────────────────
+# Keep these out of the image build context. They live in git for humans,
+# not for the build.
+docs/LESSONS.md
+docs/plans/
+docs/superpowers/
+docs/RUNBOOK.md
+docs/README.md
+README.md
+
+# ── Docker self-references ───────────────────────────────────────────────
+Dockerfile
+.dockerignore
+docker-compose.yml
+.docker/

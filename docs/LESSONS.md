@@ -961,6 +961,99 @@ public QAServiceImpl(...) {  // old signature
 that don't care about metrics. Same pattern used for `IngestServiceImpl`
 (5-arg → 6-arg with `MeterRegistry`).
 
+### 12.6 Cluster 4: Docker build — 5 pitfalls hit while shipping Dockerfile + compose
+
+#### 12.6.1 Maven base image triggers a CN proxy cert mismatch
+
+`FROM maven:3.9-eclipse-temurin-21` (multi-arch) pulls through
+`image-mirror.r2.daocloud.vip` in this environment. The mirror returns
+a cert for `wwwqa.microsoft.com` — TLS handshake fails. The single-arch
+`eclipse-temurin:21-jdk` image has no such issue.
+
+**Fix** — keep Temurin as the base and COPY Maven in from the build
+context (`./.docker-maven/`). The host's existing
+`$HOME/apache-maven-3.9.16/` is staged by `scripts/build-docker.sh`.
+
+#### 12.6.2 Build container has no network (or only host-proxy network)
+
+The container running `RUN apt-get install curl && curl ...` can't reach
+external mirrors — even ones the host can reach via 127.0.0.1:7897.
+The build container's network namespace is isolated.
+
+**Fix** — never try to download Maven / apt packages from inside the
+build. Stage everything into the build context and COPY it in.
+
+#### 12.6.3 Podman 4.9 imagebuilder can't parse heredocs in `RUN`
+
+```
+RUN cat > settings.xml <<'EOF'
+<settings>...
+EOF
+```
+
+Podman mis-parses the lines after `EOF` as new Dockerfile instructions
+(`"<SETTINGS>"` not a valid command). Docker BuildKit handles heredocs
+correctly.
+
+**Fix** — use `printf '%s\n' ... > settings.xml` for short XML/SQL/etc.
+content. Verbose but works in both Docker and podman.
+
+#### 12.6.4 `.dockerignore` excludes Maven's `*.jar` files too
+
+A naive `.dockerignore` with `**/*.jar` strips out the
+`plexus-classworlds-*.jar` from `.docker-maven/boot/`, breaking `mvn`
+inside the build. Symptom: `Error: Could not find or load main class
+org.codehaus.plexus.classworlds.launcher.Launcher`.
+
+**Fix** — add explicit allow-list negation:
+```
+**/*.jar
+!/.docker-maven/**/*.jar
+```
+
+#### 12.6.5 Maven `-pl '!module'` syntax is rejected by Maven 3.9 + `-am`
+
+`mvn -pl '!rag-test,rag-app' -am package` fails with "Could not find the
+selected project in the reactor: rag-test". The negation form is
+officially supported since Maven 3.6 but the parser trips on the comma
+in the same arg when combined with `-am`.
+
+**Fix** — at build time, copy the parent pom to `pom.xml.original`,
+`sed -i '/<module>rag-test<\/module>/d' pom.xml`, run mvn with plain
+`-am`, then restore the original. Ugly but reliable.
+
+```dockerfile
+RUN cp pom.xml pom.xml.original && \
+    sed -i '/<module>rag-test<\/module>/d' pom.xml && \
+    mvn -pl rag-app -am -B -DskipTests package && \
+    cp pom.xml.original pom.xml && \
+    rm pom.xml.original
+```
+
+#### 12.6.6 `depends_on.condition: service_healthy` breaks podman-compose dep walker
+
+When the dependency service is gated by a `profiles:` list,
+`podman-compose up -d app` raises `KeyError: 'redis'` from the dep
+walker. Docker compose handles this correctly; podman-compose 1.6.0
+doesn't.
+
+**Fix** — for the legacy "manually-started `rag-redis-stack`" workflow,
+drop `depends_on` entirely. The app's own healthcheck + Spring retry
+covers transient drops. Document this trade-off in the YAML comment.
+
+### 12.7 Cluster 4: `RedisProperties` reads from `spring.rag.redis.*` but `application.yml` populates `spring.data.redis.*`
+
+`RedisProperties.host` defaults to `"127.0.0.1"`. The `REDIS_HOST` env
+var doesn't reach it. To wire from env you need either:
+1. Add `spring.rag.redis.host: ${REDIS_HOST:localhost}` to `application.yml`
+2. Use `SPRING_APPLICATION_JSON` to inject the values as a first-class
+   PropertySource (the pattern we use for `rag.siliconflow.*`).
+
+The compose file does (2) so the `app` service can point at
+`REDIS_HOST=host.docker.internal` without code changes. If you want
+(1) instead, edit `application.yml` and drop the
+`SPRING_APPLICATION_JSON` block.
+
 ---
 
 ## Appendix: Common dotenv pitfalls

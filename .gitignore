@@ -37,6 +37,8 @@ application-dev.yml
 **/secrets.yaml
 # rag-embedding env templates: keep the .example, ignore the real .env
 rag-embedding/.env
+# Local Maven staging for docker builds (see scripts/build-docker.sh)
+.docker-maven/
 # Hermes-managed secrets store
 .hermes/secrets/
 
