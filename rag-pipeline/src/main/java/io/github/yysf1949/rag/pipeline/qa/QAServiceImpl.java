@@ -24,6 +24,7 @@ import io.github.yysf1949.rag.pipeline.context.ContextAssembler.AssembledPrompt;
 import io.github.yysf1949.rag.pipeline.logging.PipelineMdc;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
@@ -162,6 +163,24 @@ public class QAServiceImpl implements QAService {
         try {
             return answerInternal(query, t0, stamps, stageTimers);
         } finally {
+            // Spec §9.1 — expose cache hit ratios as Micrometer Gauges (best-effort)
+            try {
+                meterRegistry.gauge(
+                        "rag.qa.cache.hit.ratio",
+                        Tags.of("tenant", query.tenantId()),
+                        answerCache,
+                        ac -> ac.hitRatio(query.tenantId()));
+            } catch (RuntimeException e) {
+                log.debug("Failed to register rag.qa.cache.hit.ratio gauge: {}", e.getMessage());
+            }
+            try {
+                meterRegistry.gauge(
+                        "rag.embedding.cache.hit.ratio",
+                        embeddingCache,
+                        EmbeddingCache::hitRatio);
+            } catch (RuntimeException e) {
+                log.debug("Failed to register rag.embedding.cache.hit.ratio gauge: {}", e.getMessage());
+            }
             // Spec §9.2: every per-request MDC key we own must be cleared
             // before the response returns, so the next request on this
             // thread starts with a clean slate.
