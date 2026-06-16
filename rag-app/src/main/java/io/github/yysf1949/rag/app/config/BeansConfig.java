@@ -27,32 +27,21 @@ import java.util.concurrent.ConcurrentMap;
  * Wires the 9 ports that {@link QAServiceImpl} consumes, plus the
  * orchestrator itself.
  *
- * <h2>Bean resolution strategy (Phase 6+ stub-aware)</h2>
+ * <h2>Bean resolution strategy</h2>
  * <ul>
- *   <li>If a real implementation is on the classpath (rag-redis,
- *       rag-embedding once it ships), Spring picks it up via
- *       {@code @ConditionalOnMissingBean} on our stubs.</li>
- *   <li>Otherwise the stub below is registered. This makes the app
- *       runnable in pure-local mode — no Redis, no DashScope, no LLM
- *       network calls — so unit / smoke tests can drive it.</li>
+ *   <li>{@link EmbeddingGateway}, {@link RerankService}, {@link LlmService}
+ *       — registered by {@code io.github.yysf1949.rag.embedding.stub.EmbeddingStubConfig}
+ *       (the stub beans), guarded by
+ *       {@code @ConditionalOnMissingBean} so Phase 5-P4 real
+ *       DashScope impls override the stubs transparently.</li>
+ *   <li>{@link VectorStore}, {@link AnswerCache}, {@link EmbeddingCache},
+ *       {@link HotQuestionProvider} — provided by {@code rag-redis} when
+ *       Redis is on the classpath; otherwise the {@link Noop} variants
+ *       declared at the bottom of this file are wired. The {@code Noop}
+ *       variants are <b>assembly-layer</b> concerns (graceful
+ *       degradation when Redis is unavailable), so they live with the
+ *       Spring Boot entry point rather than in {@code rag-redis}.</li>
  * </ul>
- *
- * <h2>Stub semantics (each is documented on the class itself)</h2>
- * <ul>
- *   <li>{@link StubLlmService} — echoes the prompt back, marked with
- *       the model id {@code stub-llm}. Spec §13.11 real impl will replace it.</li>
- *   <li>{@link StubEmbeddingGateway} — fixed 16-dim zero vector per text,
- *       keyed on text hash in a {@code ConcurrentHashMap} as the cache.</li>
- *   <li>{@link StubRerankService} — returns the first {@code topN} of the
- *       input, no actual scoring.</li>
- *   <li>{@link InMemoryHotQuestionProvider} — fixed sample list, used
- *       only when retrieval returns empty.</li>
- * </ul>
- *
- * <p>All four stubs are production-safe in the sense that they
- * <b>never throw</b> on a well-formed request. The {@link QAServiceImpl}
- * degradation ladder is exercised by these stubs the same way it will
- * be exercised by the real impls.</p>
  */
 @Configuration
 public class BeansConfig {
@@ -76,10 +65,6 @@ public class BeansConfig {
      * create a {@code NoUniqueBeanDefinitionException} on injection
      * because both {@code RuleBasedQueryRewriter} and
      * {@code CachingRuleBasedRewriter} implement {@code RewriteService}.
-     *
-     * <p>Callers that want the rule-only behaviour should depend on
-     * {@link RuleBasedQueryRewriter} directly, not the {@code RewriteService}
-     * port.</p>
      */
     private RuleBasedQueryRewriter ruleBasedQueryRewriter(SynonymTable table) {
         return new RuleBasedQueryRewriter(table);
@@ -107,19 +92,22 @@ public class BeansConfig {
             @Autowired(required = false) LlmService llm,
             @Autowired(required = false) HotQuestionProvider hotQuestions) {
 
-        // Fall back to stubs when the real impl is not on the classpath.
+        // Fall back to no-op variants when the real impl is not on the
+        // classpath. EmbeddingGateway / RerankService / LlmService are
+        // covered by EmbeddingStubConfig — if those beans are missing
+        // for any reason, still wire something to keep the app runnable.
         AnswerCache ans = answerCache != null ? answerCache : new NoopAnswerCache();
         EmbeddingCache ec = embeddingCache != null ? embeddingCache : new NoopEmbeddingCache();
-        EmbeddingGateway eg = embeddingGateway != null ? embeddingGateway : new StubEmbeddingGateway();
-        VectorStore vs = vectorStore != null ? vectorStore : new StubVectorStore();
-        RerankService rr = reranker != null ? reranker : new StubRerankService();
-        LlmService ll = llm != null ? llm : new StubLlmService();
+        VectorStore vs = vectorStore != null ? vectorStore : new NoopVectorStore();
+        EmbeddingGateway eg = embeddingGateway != null ? embeddingGateway : new io.github.yysf1949.rag.embedding.stub.StubEmbeddingGateway();
+        RerankService rr = reranker != null ? reranker : new io.github.yysf1949.rag.embedding.stub.StubRerankService();
+        LlmService ll = llm != null ? llm : new io.github.yysf1949.rag.embedding.stub.StubLlmService();
         HotQuestionProvider hq = hotQuestions != null ? hotQuestions : new InMemoryHotQuestionProvider();
 
         return new QAServiceImpl(rewriter, ans, ec, eg, vs, rr, contextAssembler, ll, hq);
     }
 
-    // ─── stubs (only registered if no real impl is on the classpath) ────
+    // ─── no-op fallbacks (assembly-layer degradation only) ──────────────
 
     /**
      * Local in-process answer cache — never persists, never throws.
@@ -163,62 +151,16 @@ public class BeansConfig {
     }
 
     /**
-     * Deterministic embedding stub — every text gets the same 16-dim
-     * vector. Useful for end-to-end smoke (cache always hits after the
-     * first call). Real impl comes from rag-embedding / DashScope.
+     * No-op vector store — every retrieval is empty. Forces the
+     * {@code QAServiceImpl} degradation ladder into the
+     * "emptyRetrieval → FALLBACK_RULE" branch, which is exactly what
+     * smoke tests want to assert.
      */
-    public static class StubEmbeddingGateway implements EmbeddingGateway {
-        public static final int DIM = 16;
-        private final ConcurrentMap<String, float[]> cache = new ConcurrentHashMap<>();
-
+    static class NoopVectorStore implements VectorStore {
         @Override
-        public List<float[]> embedBatch(List<String> texts) {
-            return texts.stream().map(t -> cache.computeIfAbsent(t, k -> newZeroVec(DIM))).toList();
-        }
-
+        public int upsert(List<io.github.yysf1949.rag.core.model.Chunk> chunks) { return 0; }
         @Override
-        public List<float[]> embedWithoutCache(List<String> texts) {
-            return texts.stream().map(t -> newZeroVec(DIM)).toList();
-        }
-
-        @Override
-        public int dimension() { return DIM; }
-
-        @Override
-        public void warmCache(java.util.Map<String, float[]> entries) {
-            cache.putAll(entries);
-        }
-
-        private static float[] newZeroVec(int dim) {
-            float[] v = new float[dim];
-            // give it a tiny per-text fingerprint so cosine is well-defined
-            for (int i = 0; i < dim; i++) v[i] = (float) Math.sin(i * 0.1);
-            return v;
-        }
-    }
-
-    /**
-     * Stub vector store — returns whatever was {@code upsert}-ed.
-     * Test-only behaviour: ignores all filter parameters and returns
-     * the entire stored corpus in insertion order.
-     */
-    public static class StubVectorStore implements VectorStore {
-        private final ConcurrentMap<String, io.github.yysf1949.rag.core.model.Chunk> store =
-                new ConcurrentHashMap<>();
-
-        @Override
-        public int upsert(List<io.github.yysf1949.rag.core.model.Chunk> chunks) {
-            for (var c : chunks) store.put(c.chunkId(), c);
-            return chunks.size();
-        }
-
-        @Override
-        public int deleteByIds(String tenantId, String kbId, long kbVersion, List<String> chunkIds) {
-            int n = 0;
-            for (String id : chunkIds) if (store.remove(id) != null) n++;
-            return n;
-        }
-
+        public int deleteByIds(String tenantId, String kbId, long kbVersion, List<String> chunkIds) { return 0; }
         @Override
         public List<io.github.yysf1949.rag.core.model.Chunk> search(
                 float[] queryVector,
@@ -228,39 +170,12 @@ public class BeansConfig {
                 List<String> userPermissionTags,
                 io.github.yysf1949.rag.core.model.PermissionMode permissionMode,
                 int topK) {
-            return store.values().stream().limit(topK).toList();
+            return List.of();
         }
-
         @Override
         public void publish(String tenantId, String kbId, long kbVersion) { /* no-op */ }
-
         @Override
         public int deprecate(String tenantId, String kbId, long oldKbVersion) { return 0; }
-    }
-
-    /** Stub rerank — first {@code topN} of input, no scoring. */
-    public static class StubRerankService implements RerankService {
-        @Override
-        public List<io.github.yysf1949.rag.core.model.Chunk> rerank(
-                String query, List<io.github.yysf1949.rag.core.model.Chunk> candidates, int topN) {
-            return candidates.subList(0, Math.min(topN, candidates.size()));
-        }
-    }
-
-    /**
-     * Stub LLM — echoes the prompt wrapped in a marker. Marks itself
-     * with {@code modelId() == "stub-llm"} so dashboards can split
-     * "stub traffic" from "real LLM traffic" if both are ever live.
-     */
-    public static class StubLlmService implements LlmService {
-        @Override
-        public String generateAnswer(String tenantId, String prompt) {
-            return "[stub-llm] Received prompt of length " + prompt.length()
-                    + " chars; would normally call DashScope here.";
-        }
-
-        @Override
-        public String modelId() { return "stub-llm"; }
     }
 
     /** Stub hot-question provider — fixed 3-entry list. */
