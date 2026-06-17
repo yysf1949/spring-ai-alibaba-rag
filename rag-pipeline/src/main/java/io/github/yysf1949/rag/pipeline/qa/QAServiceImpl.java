@@ -112,7 +112,7 @@ public class QAServiceImpl implements QAService {
      */
     private static final List<String> STAGE_NAMES = List.of(
             "rewrite", "cacheCheck", "embed", "retrieve",
-            "rerank", "assemble", "generate");
+            "rerank", "assemble", "generate", "cachePut");
 
     public QAServiceImpl(RewriteService rewriter,
                          AnswerCache answerCache,
@@ -364,6 +364,11 @@ public class QAServiceImpl implements QAService {
             Counter.builder("rag.qa.requests.total")
                     .tag("tenant", query.tenantId())
                     .tag("source", AnswerSource.FALLBACK_RULE.name())
+                    .register(meterRegistry)
+                    .increment();
+            // Spec §9.1 — rag.qa.empty_retrieval.total counter
+            Counter.builder("rag.qa.empty_retrieval.total")
+                    .tag("tenant", query.tenantId())
                     .register(meterRegistry)
                     .increment();
             return emptyRetrievalAnswer(query, rewritten, queryHash, t0);

@@ -1,6 +1,7 @@
 package io.github.yysf1949.rag.app.web;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import io.github.yysf1949.rag.app.config.MdcTenantFilter;
 import io.github.yysf1949.rag.core.model.Answer;
 import io.github.yysf1949.rag.core.model.KbVersion;
@@ -64,6 +65,7 @@ public class RagController {
     }
 
     @PostMapping("/qa")
+    @RateLimiter(name = "qa")
     @Operation(
             summary = "Answer a user query against the tenant knowledge base.",
             description = "Runs the full online chain (rewrite → embed → retrieve → rerank → assemble → LLM). "

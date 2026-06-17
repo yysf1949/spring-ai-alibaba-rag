@@ -132,16 +132,13 @@ sudden spike in `source=fallback_rule` means the LLM is down.
 This is the **"we served the user but with worse quality"** counter.
 It should be near zero. Spikes map 1:1 to a downstream incident.
 
-### `rag.qa.empty_retrieval.count`
+### `rag.qa.empty_retrieval.total`
 
 | Aspect | Value |
 |---|---|
 | Type | Counter |
-| Labels | `tenant`, `kb_id` |
-
-> **NOTE**: this is currently emitted as a `stage.retrieval.empty`
-> boolean in the `Answer.metrics` map — promote to a counter in
-> `rag-app`.
+| Labels | `tenant` |
+| Source | `QAServiceImpl` — incremented every time the pipeline hits empty-retrieval (zero search results) and returns a FALLBACK_RULE answer.
 
 ---
 
