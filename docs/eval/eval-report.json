@@ -1,0 +1,61 @@
+[ {
+  "name" : "exchange-policy",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 0.0,
+  "pass" : false
+}, {
+  "name" : "group-buy-return",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 1.0,
+  "pass" : true
+}, {
+  "name" : "shipping-damage",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 1.0,
+  "pass" : true
+}, {
+  "name" : "return-period",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 1.0,
+  "pass" : true
+}, {
+  "name" : "refund-reason",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 1.0,
+  "pass" : true
+}, {
+  "name" : "vip-priority",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 1.0,
+  "pass" : true
+}, {
+  "name" : "international-return",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 1.0,
+  "pass" : true
+}, {
+  "name" : "partial-refund",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 1.0,
+  "pass" : true
+}, {
+  "name" : "warranty-claim",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 1.0,
+  "pass" : true
+}, {
+  "name" : "special-goods",
+  "recallAtK" : 1.0,
+  "citationCoverage" : 1.0,
+  "groundRate" : 0.0,
+  "pass" : false
+} ]
