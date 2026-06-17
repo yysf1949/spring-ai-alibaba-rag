@@ -2,6 +2,7 @@ package io.github.yysf1949.rag.redis.vector;
 
 import io.github.yysf1949.rag.core.model.Chunk;
 import io.github.yysf1949.rag.core.model.ChunkStatus;
+import io.github.yysf1949.rag.core.model.EmbeddingChannel;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
@@ -51,6 +52,7 @@ public final class RedisChunkCodec {
         m.put("sectionPath", chunk.sectionPath() == null ? "" : chunk.sectionPath());
         m.put("sourceUri", chunk.sourceUri() == null ? "" : chunk.sourceUri());
         m.put("content", chunk.content() == null ? "" : chunk.content());
+        m.put("embeddingChannel", chunk.embeddingChannel().name());
         // embedding is stored as a separate field via HSET with binary value —
         // caller is responsible for adding it via the byte[] overload of hset.
         return m;
@@ -97,7 +99,8 @@ public final class RedisChunkCodec {
                 status,
                 publishedAt,
                 fields.getOrDefault("sourceUri", ""),
-                embedding
+                embedding,
+                parseEmbeddingChannel(fields.get("embeddingChannel"))
         );
     }
 
@@ -159,6 +162,22 @@ public final class RedisChunkCodec {
             return ChunkStatus.valueOf(s);
         } catch (IllegalArgumentException ex) {
             return ChunkStatus.STAGING;
+        }
+    }
+
+    /**
+     * Parse {@code embeddingChannel} from Redis hash field.
+     * Returns {@link EmbeddingChannel#STUB_HASH} for missing / unknown values
+     * (backward compat with chunks stored before the field was added).
+     */
+    static EmbeddingChannel parseEmbeddingChannel(String s) {
+        if (s == null || s.isEmpty()) {
+            return EmbeddingChannel.STUB_HASH;
+        }
+        try {
+            return EmbeddingChannel.valueOf(s);
+        } catch (IllegalArgumentException ex) {
+            return EmbeddingChannel.STUB_HASH;
         }
     }
 

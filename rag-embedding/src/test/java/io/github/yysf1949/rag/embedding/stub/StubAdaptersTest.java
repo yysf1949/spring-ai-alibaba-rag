@@ -114,6 +114,6 @@ class StubAdaptersTest {
         return new io.github.yysf1949.rag.core.model.Chunk(
                 id, "t1", "kb1", "doc1", "1", "title", "anchor",
                 "body", java.util.Set.of(), io.github.yysf1949.rag.core.model.ChunkStatus.ACTIVE,
-                java.time.Instant.now(), "src", new float[16]);
+                java.time.Instant.now(), "src", new float[16], null);
     }
 }

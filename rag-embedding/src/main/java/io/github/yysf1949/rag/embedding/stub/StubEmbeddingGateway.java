@@ -56,19 +56,35 @@ public class StubEmbeddingGateway implements EmbeddingGateway {
 
     private static float[] newZeroVec(int dim, String text) {
         float[] v = new float[dim];
-        // Per-dim fingerprint: every dimension sees the SAME text but a different
-        // hash salt. This guarantees:
-        //   (a) identical text → identical vector (cosine = 1)
-        //   (b) any text change → different vector in many dims (random-ish cosine)
-        // which is exactly what a deterministic stub needs to support rank-preserving
-        // KNN retrieval. (Pre-change code used a single global seed, which collapsed
-        // every dimension onto the same sin() phase and made KNN retrieval random.)
-        // Use Java's String.hashCode() semantics (truncated to 32 bits) so the
-        // Python test harness can reproduce — but the JVM is the production source
-        // of truth, so tests align by recomputing with the same algorithm.
-        for (int i = 0; i < dim; i++) {
-            int seed = text.hashCode() ^ (i * 0x9E3779B9);
-            v[i] = (float) Math.sin(seed * 0.0001);
+        // Character 3-gram bag-of-words hash: each trigram contributes
+        // to 3 dimensions via modulo, producing a stable embedding where
+        // similar texts (add/remove 1 char) produce similar vectors.
+        // L2-normalize so cosine distance is well-defined.
+        //
+        // Identical text → identical vector (cosine = 1) ✓
+        // Similar texts  → ~similar vectors (most trigrams overlap) ✓
+        // Different text → different vectors ✓
+        if (text == null || text.isEmpty()) {
+            return v;
+        }
+        int n = text.length();
+        int contributions = 0;
+        for (int i = 0; i < n - 2; i++) {
+            int trigram = (text.charAt(i) * 31 + text.charAt(i + 1)) * 31 + text.charAt(i + 2);
+            for (int j = 0; j < 3; j++) {
+                int dimIdx = Math.abs((trigram * 0x9E3779B9 + j * 7919)) % dim;
+                v[dimIdx] += (float) Math.sin(trigram * 0.001 + j);
+            }
+            contributions++;
+        }
+        // L2 normalize
+        if (contributions > 0) {
+            double norm = 0;
+            for (int i = 0; i < dim; i++) norm += v[i] * v[i];
+            if (norm > 0) {
+                norm = Math.sqrt(norm);
+                for (int i = 0; i < dim; i++) v[i] /= (float) norm;
+            }
         }
         return v;
     }

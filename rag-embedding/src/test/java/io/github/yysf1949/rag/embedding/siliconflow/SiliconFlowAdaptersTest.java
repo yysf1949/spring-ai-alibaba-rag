@@ -384,7 +384,7 @@ class SiliconFlowAdaptersTest {
         return new Chunk(id, "tenant-A", "kb-1", "doc-1", "v1",
                 "title", "section", content, java.util.Set.of("public"),
                 io.github.yysf1949.rag.core.model.ChunkStatus.ACTIVE,
-                java.time.Instant.now(), null, new float[1024]);
+                java.time.Instant.now(), null, new float[1024], null);
     }
 
     private static String sha256Hex(String s) {

@@ -146,7 +146,7 @@ class SiliconFlowIT {
     private static Chunk mkChunk(String id, String content) {
         return new Chunk(id, "tenant-IT", "kb-IT", "doc-IT", "v1",
                 "title", "section", content, Set.of("public"),
-                ChunkStatus.ACTIVE, Instant.now(), null, new float[1024]);
+                ChunkStatus.ACTIVE, Instant.now(), null, new float[1024], null);
     }
 
     private static double cosine(float[] a, float[] b) {

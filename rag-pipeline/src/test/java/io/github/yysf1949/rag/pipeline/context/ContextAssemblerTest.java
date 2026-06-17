@@ -29,7 +29,7 @@ class ContextAssemblerTest {
         return new Chunk(id, "tenant-A", "kb-refund", "doc-1", "1",
                 "退款规则", section, content,
                 Set.of(), ChunkStatus.ACTIVE, Instant.now(),
-                "https://docs.example.com/refund", new float[0]);
+                "https://docs.example.com/refund", new float[0], null);
     }
 
     // ─── happy path ───────────────────────────────────────────────────────

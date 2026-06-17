@@ -415,8 +415,22 @@ public class RedisVectorStore implements VectorStore {
                 log.info("publish: alias {} → {} (newly added)", alias, activeIndex);
             }
 
-            // 4) Persist the publish pointer for resolveActiveVersion() callers.
+            // 4) Read old publish pointer for deprecation (before overwriting).
+            String oldVersionStr = client.get(indexManager.publishPointerKey(tenantId, kbId));
+            long oldKbVersion = oldVersionStr == null ? -1L : Long.parseLong(oldVersionStr);
+
+            // 5) Persist the publish pointer for resolveActiveVersion() callers.
             indexManager.setPublishPointer(tenantId, kbId, kbVersion);
+
+            // 6) Deprecate old version chunks (spec §6.4).
+            //    Old chunks get status=DEPRECATED so the @status:{ACTIVE} pre-filter
+            //    no longer returns them on the alias. Cleanup (async, 7-day TTL) is
+            //    the deployment / ops concern — see spec §6.4.
+            if (oldKbVersion > 0 && oldKbVersion != kbVersion) {
+                int deprecated = deprecate(tenantId, kbId, oldKbVersion);
+                log.info("publish: deprecated {} old-V{} chunks for {}/{}",
+                        deprecated, oldKbVersion, tenantId, kbId);
+            }
         } catch (Exception e) {
             throw new VectorStoreUnavailableException(
                     "publish failed for tenant=" + tenantId + " kb=" + kbId + " v=" + kbVersion, e);

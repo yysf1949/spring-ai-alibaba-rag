@@ -235,7 +235,7 @@ class QAServiceImplMdcTest {
         return new Chunk(id, "tenant-A", "kb-1", "doc-1", "1",
                 "退款规则", section, content,
                 new HashSet<>(Set.of()), ChunkStatus.ACTIVE, Instant.now(),
-                "https://docs.example.com/refund", new float[0]);
+                "https://docs.example.com/refund", new float[0], null);
     }
 
     private static Query query(String rawText) {

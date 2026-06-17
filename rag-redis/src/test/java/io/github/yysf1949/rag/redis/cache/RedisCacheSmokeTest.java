@@ -274,7 +274,7 @@ class RedisCacheSmokeTest {
                 "cid-1", tenant, "kb-1", "doc-1", "1",
                 "title", "/path", "body text", Set.of("public"),
                 ChunkStatus.ACTIVE, Instant.now(), "https://example.com/d1",
-                new float[1536]);
+                new float[1536], null);
         Citation cit = new Citation("cid-1", "title", "/path",
                 "https://example.com/d1", 0.95);
         return new Answer(tenant, queryHash, "rewritten " + queryHash,

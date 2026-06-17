@@ -228,7 +228,7 @@ class RagControllerSmokeTest {
                         ChunkStatus.ACTIVE,
                         Instant.now(),
                         "https://docs.example.com/refund",
-                        new float[16]);
+                        new float[16], null);
                 store.put(seed.chunkId(), seed);
             }
 

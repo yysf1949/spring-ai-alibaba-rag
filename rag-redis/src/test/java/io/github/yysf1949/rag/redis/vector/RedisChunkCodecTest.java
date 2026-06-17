@@ -49,7 +49,8 @@ class RedisChunkCodecTest {
                 ChunkStatus.ACTIVE,
                 now,
                 "https://example.com/doc-1",
-                new float[]{0.1f, 0.2f}
+                new float[]{0.1f, 0.2f},
+                null
         );
 
         Map<String, String> fields = RedisChunkCodec.toHashFields(c);
@@ -85,7 +86,8 @@ class RedisChunkCodecTest {
                 ChunkStatus.STAGING,
                 now,
                 "https://example.com/doc-1",
-                new float[]{0.5f, 0.6f, 0.7f}
+                new float[]{0.5f, 0.6f, 0.7f},
+                null
         );
         Map<String, String> fields = RedisChunkCodec.toHashFields(original);
         byte[] embeddingBytes = RedisChunkCodec.toEmbeddingBytes(original.embedding());
@@ -108,7 +110,7 @@ class RedisChunkCodecTest {
     @Test
     void emptyAndNullPermissionTagsCollapseToEmptyString() {
         Chunk c1 = new Chunk("c", "t", "k", "d", "1", null, null, "x",
-                null, ChunkStatus.STAGING, Instant.EPOCH, null, new float[0]);
+                null, ChunkStatus.STAGING, Instant.EPOCH, null, new float[0], null);
         Map<String, String> fields = RedisChunkCodec.toHashFields(c1);
         assertEquals("", fields.get("permissionTags"));
 

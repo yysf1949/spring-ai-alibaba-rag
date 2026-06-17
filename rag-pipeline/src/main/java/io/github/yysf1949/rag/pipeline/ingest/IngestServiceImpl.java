@@ -398,7 +398,8 @@ public class IngestServiceImpl implements IngestService {
                 c.chunkId(), c.tenantId(), c.kbId(), c.documentId(),
                 c.documentVersion(), c.title(), c.sectionPath(),
                 c.content(), c.permissionTags(), c.status(),
-                c.publishedAt(), c.sourceUri(), v);
+                c.publishedAt(), c.sourceUri(), v,
+                c.embeddingChannel());
     }
 
     // ─── kbId / kbVersion derivation ───────────────────────────────────────

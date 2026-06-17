@@ -8,7 +8,11 @@ import java.util.UUID;
  * A single retrieval unit — typically 200-800 tokens of structured text.
  *
  * <p>Design spec §4 + §13.4 — fields are immutable. {@code embedding} is
- * a primitive {@code float[]} (1024 dim for SiliconFlow BAAI/bge-m3).</p>
+ * a primitive {@code float[]} (1024 dim for SiliconFlow BAAI/bge-m3).
+ *
+ * <p>{@code embeddingChannel} records which provider produced the vector
+ * ({@link EmbeddingChannel#STUB_HASH} for the local hash stub,
+ * {@link EmbeddingChannel#SILICONFLOW_BGE_M3} for the online provider).
  *
  * <p>Indexes over a chunk MUST filter on (tenantId, kbId, kbVersion, status=ACTIVE,
  * permissionTags). See {@link io.github.yysf1949.rag.core.port.VectorStore}.</p>
@@ -26,7 +30,8 @@ public record Chunk(
         ChunkStatus status,
         Instant publishedAt,
         String sourceUri,
-        float[] embedding
+        float[] embedding,
+        EmbeddingChannel embeddingChannel
 ) {
 
     public Chunk {
@@ -52,6 +57,7 @@ public record Chunk(
         if (status == null) {
             status = ChunkStatus.STAGING;
         }
+        embeddingChannel = embeddingChannel == null ? EmbeddingChannel.STUB_HASH : embeddingChannel;
     }
 
     public int embeddingDim() {

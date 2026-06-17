@@ -336,7 +336,7 @@ class RedisVectorStoreSmokeTest {
                                ChunkStatus status, float[] embedding) {
         return new Chunk(id, tenant, kb, "doc-" + id, version,
                 title, "/policy", content, permTags, status,
-                Instant.now(), "https://example.com/" + id, embedding);
+                Instant.now(), "https://example.com/" + id, embedding, null);
     }
 
     /**

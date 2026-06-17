@@ -201,7 +201,8 @@ public final class ChunkSplitter {
                 ChunkStatus.STAGING,
                 null,            // publishedAt — flipped on publish
                 doc.sourceUri(),
-                new float[0]     // embedding — filled by the ingester
+                new float[0],    // embedding — filled by the ingester
+                null             // embeddingChannel — defaults to STUB_HASH
         );
     }
 
@@ -226,7 +227,8 @@ public final class ChunkSplitter {
                 original.status(),
                 original.publishedAt(),
                 original.sourceUri(),
-                original.embedding()
+                original.embedding(),
+                original.embeddingChannel()
         );
     }
 }

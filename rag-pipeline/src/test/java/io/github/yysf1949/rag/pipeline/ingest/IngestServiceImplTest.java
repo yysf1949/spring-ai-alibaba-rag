@@ -306,6 +306,6 @@ class IngestServiceImplTest {
     private static Chunk stubChunk(String id, String body) {
         return new Chunk(
                 id, TENANT, "kb-1", "doc-stub", "1", "t", "/path",
-                body, Set.of(), ChunkStatus.STAGING, null, "uri", new float[0]);
+                body, Set.of(), ChunkStatus.STAGING, null, "uri", new float[0], null);
     }
 }
