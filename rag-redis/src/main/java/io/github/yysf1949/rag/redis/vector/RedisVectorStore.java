@@ -212,17 +212,20 @@ public class RedisVectorStore implements VectorStore {
                 java.util.function.Supplier<SearchResult> guarded =
                         (circuitBreaker == null) ? upstream
                                 : CircuitBreaker.decorateSupplier(circuitBreaker, upstream);
-                SearchResult result;
                 try {
-                    result = guarded.get();
+                    SearchResult result = guarded.get();
+                    List<Chunk> raw = mapResultToChunks(client, result, tenantId, kbId);
+                    return applyAndPermissionFilter(raw, userPermissionTags, permissionMode, topK);
                 } catch (CallNotPermittedException ex) {
-                    // Breaker OPEN — don't even attempt Redis.
+                    // Breaker OPEN — let the typed message bubble up unchanged so
+                    // operators can tell "tripped" from "upstream failed" in logs.
                     throw new VectorStoreUnavailableException(
                             "Redis circuit breaker OPEN — skipping search for tenant=" + tenantId
                                     + " kb=" + kbId, ex);
                 }
-                List<Chunk> raw = mapResultToChunks(client, result, tenantId, kbId);
-                return applyAndPermissionFilter(raw, userPermissionTags, permissionMode, topK);
+            } catch (VectorStoreUnavailableException ex) {
+                // Already a typed exception (e.g. from the breaker above) — don't re-wrap.
+                throw ex;
             } catch (Exception e) {
                 throw new VectorStoreUnavailableException(
                         "search failed for tenant=" + tenantId + " kb=" + kbId + " v=" + versionToSearch, e);

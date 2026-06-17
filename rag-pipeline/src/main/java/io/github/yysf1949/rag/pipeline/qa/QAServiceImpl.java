@@ -1,5 +1,8 @@
 package io.github.yysf1949.rag.pipeline.qa;
 
+import io.github.resilience4j.ratelimiter.RateLimiter;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import io.github.yysf1949.rag.core.exception.EmbeddingUnavailableException;
 import io.github.yysf1949.rag.core.exception.LlmUnavailableException;
 import io.github.yysf1949.rag.core.exception.RerankUnavailableException;
@@ -100,6 +103,7 @@ public class QAServiceImpl implements QAService {
     private final LlmService llm;
     private final HotQuestionProvider hotQuestions;
     private final MeterRegistry meterRegistry;
+    private final RateLimiter rateLimiter; // may be null in hermetic tests
 
     /**
      * Stage timer names — spec §9.1 metric {@code rag.qa.latency.ms{stage}}.
@@ -120,7 +124,7 @@ public class QAServiceImpl implements QAService {
                          HotQuestionProvider hotQuestions) {
         this(rewriter, answerCache, embeddingCache, embeddingGateway,
                 vectorStore, reranker, contextAssembler, llm, hotQuestions,
-                new SimpleMeterRegistry());
+                new SimpleMeterRegistry(), null);
     }
 
     public QAServiceImpl(RewriteService rewriter,
@@ -133,6 +137,30 @@ public class QAServiceImpl implements QAService {
                          LlmService llm,
                          HotQuestionProvider hotQuestions,
                          MeterRegistry meterRegistry) {
+        this(rewriter, answerCache, embeddingCache, embeddingGateway,
+                vectorStore, reranker, contextAssembler, llm, hotQuestions,
+                meterRegistry, null);
+    }
+
+    /**
+     * Production constructor — wires the {@code qa} rate limiter from the
+     * auto-configured {@link RateLimiterRegistry}. Caps concurrent /
+     * per-second requests into the QA pipeline so a single misbehaving
+     * tenant can't exhaust the SiliconFlow / Redis budget. When the
+     * limit is exceeded we throw {@link RequestNotPermitted}, mapped by
+     * {@code RagExceptionHandler} to HTTP 429 + Retry-After.
+     */
+    public QAServiceImpl(RewriteService rewriter,
+                         AnswerCache answerCache,
+                         EmbeddingCache embeddingCache,
+                         EmbeddingGateway embeddingGateway,
+                         VectorStore vectorStore,
+                         RerankService reranker,
+                         ContextAssembler contextAssembler,
+                         LlmService llm,
+                         HotQuestionProvider hotQuestions,
+                         MeterRegistry meterRegistry,
+                         RateLimiterRegistry rateLimiterRegistry) {
         this.rewriter = Objects.requireNonNull(rewriter, "rewriter");
         this.answerCache = Objects.requireNonNull(answerCache, "answerCache");
         this.embeddingCache = Objects.requireNonNull(embeddingCache, "embeddingCache");
@@ -143,11 +171,22 @@ public class QAServiceImpl implements QAService {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.hotQuestions = Objects.requireNonNull(hotQuestions, "hotQuestions");
         this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
+        this.rateLimiter = (rateLimiterRegistry == null) ? null
+                : rateLimiterRegistry.rateLimiter("qa");
     }
 
     @Override
     public Answer answer(Query query) {
         Objects.requireNonNull(query, "query");
+        // Rate-limit guard — when wired, acquires a permit BEFORE any work.
+        // RequestNotPermitted is mapped to HTTP 429 by RagExceptionHandler.
+        if (rateLimiter != null) {
+            try {
+                RateLimiter.decorateSupplier(rateLimiter, () -> Boolean.TRUE).get();
+            } catch (RequestNotPermitted ex) {
+                throw ex;
+            }
+        }
         long t0 = System.currentTimeMillis();
         // Per-stage timing — maps to spec §9.1 metric `rag.qa.latency.ms{stage}`.
         long[] stamps = new long[8];

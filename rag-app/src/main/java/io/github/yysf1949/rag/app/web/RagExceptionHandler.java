@@ -94,6 +94,21 @@ public class RagExceptionHandler {
                 "Embedding service is currently unavailable. Please retry."));
     }
 
+    /**
+     * Resilience4j rate limiter — thrown when {@code QAServiceImpl.answer()}
+     * exceeds the {@code resilience4j.ratelimiter.instances.qa} configured
+     * permit budget. We return HTTP 429 with Retry-After so well-behaved
+     * clients back off (spec §13 / RAG-as-a-service protection).
+     */
+    @ExceptionHandler(io.github.resilience4j.ratelimiter.RequestNotPermitted.class)
+    public org.springframework.http.ResponseEntity<ProblemDetail> rateLimited(
+            io.github.resilience4j.ratelimiter.RequestNotPermitted ex) {
+        log.warn("QA rate limit exceeded: {}", ex.getMessage());
+        return withRetryAfter(problem(HttpStatus.TOO_MANY_REQUESTS,
+                "qa-rate-limited",
+                "QA request rate exceeded. Please slow down and retry."));
+    }
+
     @ExceptionHandler(IngestController.IngestJobNotFoundException.class)
     public org.springframework.http.ResponseEntity<ProblemDetail> ingestJobNotFound(
             IngestController.IngestJobNotFoundException ex) {

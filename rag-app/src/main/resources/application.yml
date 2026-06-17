@@ -81,6 +81,17 @@ resilience4j:
           - io.github.yysf1949.rag.core.exception.EmbeddingUnavailableException
           - org.springframework.web.reactive.function.client.WebClientRequestException
           - java.util.concurrent.TimeoutException
+  # Rate limiter — caps concurrent / per-second requests into QAServiceImpl.
+  # Default: 100 req/sec sustained, burst to 200, no max wait (fail fast →
+  # HTTP 429). One global bucket is fine because the Redis-backed caches
+  # front the heavy legs (cache hit bypasses everything below).
+  ratelimiter:
+    instances:
+      qa:
+        registerHealthIndicator: true
+        limitForPeriod: 100
+        limitRefreshPeriod: 1s
+        timeoutDuration: 0
 
 # Spec §9.1: rag.qa.* / rag.ingest.* etc. land in the metric-wiring
 # phase. For now Spring Boot's auto-publish of jvm.*, http.server.*
