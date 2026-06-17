@@ -41,6 +41,7 @@ public record IngestJob(
         String jobId,
         String tenantId,
         String documentId,
+        String kbVersion,
         IngestJobStatus status,
         int totalChunks,
         int embeddedChunks,
@@ -73,12 +74,13 @@ public record IngestJob(
     }
 
     /** Factory for a brand-new job in {@code PENDING} state. */
-    public static IngestJob newPending(String tenantId, String documentId) {
+    public static IngestJob newPending(String tenantId, String documentId, String kbVersion) {
         Instant now = Instant.now();
         return new IngestJob(
                 UUID.randomUUID().toString(),
                 tenantId,
                 documentId,
+                kbVersion,
                 IngestJobStatus.PENDING,
                 0, 0, 0, 0,
                 now, now,
@@ -86,37 +88,37 @@ public record IngestJob(
     }
 
     public IngestJob withStatus(IngestJobStatus newStatus) {
-        return new IngestJob(jobId, tenantId, documentId, newStatus,
+        return new IngestJob(jobId, tenantId, documentId, kbVersion, newStatus,
                 totalChunks, embeddedChunks, upsertedChunks, failedChunks,
                 createdAt, Instant.now(), errorMessage);
     }
 
     public IngestJob withTotalChunks(int total) {
-        return new IngestJob(jobId, tenantId, documentId, status,
+        return new IngestJob(jobId, tenantId, documentId, kbVersion, status,
                 total, embeddedChunks, upsertedChunks, failedChunks,
                 createdAt, Instant.now(), errorMessage);
     }
 
     public IngestJob withEmbeddedChunks(int n) {
-        return new IngestJob(jobId, tenantId, documentId, status,
+        return new IngestJob(jobId, tenantId, documentId, kbVersion, status,
                 totalChunks, n, upsertedChunks, failedChunks,
                 createdAt, Instant.now(), errorMessage);
     }
 
     public IngestJob withUpsertedChunks(int n) {
-        return new IngestJob(jobId, tenantId, documentId, status,
+        return new IngestJob(jobId, tenantId, documentId, kbVersion, status,
                 totalChunks, embeddedChunks, n, failedChunks,
                 createdAt, Instant.now(), errorMessage);
     }
 
     public IngestJob withFailedChunks(int n) {
-        return new IngestJob(jobId, tenantId, documentId, status,
+        return new IngestJob(jobId, tenantId, documentId, kbVersion, status,
                 totalChunks, embeddedChunks, upsertedChunks, n,
                 createdAt, Instant.now(), errorMessage);
     }
 
     public IngestJob withError(String message) {
-        return new IngestJob(jobId, tenantId, documentId, status,
+        return new IngestJob(jobId, tenantId, documentId, kbVersion, status,
                 totalChunks, embeddedChunks, upsertedChunks, failedChunks,
                 createdAt, Instant.now(), message);
     }

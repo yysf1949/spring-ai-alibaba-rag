@@ -18,7 +18,7 @@ class IngestJobRepositoryImplTest {
     void saveAndFind() {
         IngestJobRepositoryImpl repo = new IngestJobRepositoryImpl();
         try {
-            IngestJob job = IngestJob.newPending("t", "d");
+            IngestJob job = IngestJob.newPending("t", "d", "1");
             repo.save(job);
             Optional<IngestJob> got = repo.findById(job.jobId());
             assertTrue(got.isPresent());
@@ -43,7 +43,7 @@ class IngestJobRepositoryImplTest {
     void deleteIdempotent() {
         IngestJobRepositoryImpl repo = new IngestJobRepositoryImpl();
         try {
-            IngestJob job = IngestJob.newPending("t", "d");
+            IngestJob job = IngestJob.newPending("t", "d", "1");
             repo.save(job);
             repo.delete(job.jobId());
             assertTrue(repo.findById(job.jobId()).isEmpty());
@@ -63,7 +63,7 @@ class IngestJobRepositoryImplTest {
                 java.util.concurrent.Executors.newSingleThreadScheduledExecutor(),
                 Duration.ofMillis(30));
         try {
-            IngestJob job = IngestJob.newPending("t", "d");
+            IngestJob job = IngestJob.newPending("t", "d", "1");
             repo.save(job);
             // Wait long enough for TTL + at least one sweeper tick.
             Thread.sleep(200);
@@ -84,7 +84,7 @@ class IngestJobRepositoryImplTest {
 
     @Test
     void statusTransitionsPreserveIdentity() {
-        IngestJob job = IngestJob.newPending("t", "d");
+        IngestJob job = IngestJob.newPending("t", "d", "1");
         IngestJob processing = job.withStatus(IngestJobStatus.PROCESSING);
         IngestJob embedded = processing.withEmbeddedChunks(42);
         assertEquals(job.jobId(), processing.jobId());

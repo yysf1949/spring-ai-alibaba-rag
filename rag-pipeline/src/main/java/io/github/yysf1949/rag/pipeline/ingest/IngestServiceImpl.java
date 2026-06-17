@@ -130,7 +130,7 @@ public class IngestServiceImpl implements IngestService {
 
     @Override
     public IngestJob ingestSync(Document document) {
-        IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId());
+        IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId(), document.documentVersion());
         jobRepository.save(job);
         // Pin jobId on MDC for the entire sync run (cleared in finally).
         PipelineMdc.put(PipelineMdc.KEY_JOB_ID, job.jobId());
@@ -150,7 +150,7 @@ public class IngestServiceImpl implements IngestService {
 
     @Override
     public IngestJob ingestAsync(Document document) {
-        IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId());
+        IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId(), document.documentVersion());
         jobRepository.save(job);
         // MDC is thread-local — the executor thread does NOT inherit the
         // HTTP-thread MDC (tenant / requestId). Snapshot now so the
@@ -412,13 +412,19 @@ public class IngestServiceImpl implements IngestService {
     }
 
     private static long parseKbVersion(IngestJob job) {
-        // kbVersion is the currentVersion on the KnowledgeBase. For Phase
-        // 5-P2 we don't have a KB store yet, so derive deterministically
-        // from updatedAt epoch seconds (good enough for the demo — the
-        // first ingest after process start gets version 1, the next
-        // gets version 2, etc.). Production will wire a KB repository.
-        return Math.max(1L, job.updatedAt().getEpochSecond()
-                - (job.createdAt().getEpochSecond() - 1L));
+        // kbVersion is captured at ingest time from Document.documentVersion
+        // (or IngestRequest.documentVersion on the HTTP path). Carrying it on
+        // the job — instead of deriving from createdAt/updatedAt — keeps the
+        // staging and active index names in sync with what upsert() actually
+        // wrote. The old derived formula (Math.max(1L, updatedAt - createdAt + 1))
+        // drifted whenever ingest completed in <1s, causing publish to look
+        // for a staging index that never existed.
+        try {
+            return Long.parseLong(job.kbVersion());
+        } catch (NumberFormatException | NullPointerException e) {
+            throw new IllegalStateException(
+                    "ingest job " + job.jobId() + " has non-numeric kbVersion: " + job.kbVersion(), e);
+        }
     }
 
     /** Helper for callers wiring a Document into the service. */

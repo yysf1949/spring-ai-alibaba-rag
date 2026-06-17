@@ -60,7 +60,7 @@ class IngestControllerSmokeTest {
         String jobId = UUID.randomUUID().toString();
         Instant now = Instant.parse("2026-06-17T10:00:00Z");
         when(ingestService.ingestAsync(any())).thenReturn(
-                new IngestJob(jobId, "tenant-A", "kb-prod-001/doc-1",
+                new IngestJob(jobId, "tenant-A", "kb-prod-001/doc-1", "1",
                         IngestJobStatus.PENDING, 0, 0, 0, 0, now, now, null));
 
         var body = Map.of(
@@ -123,7 +123,7 @@ class IngestControllerSmokeTest {
         String jobId = UUID.randomUUID().toString();
         Instant now = Instant.parse("2026-06-17T10:05:00Z");
         when(ingestService.getJob(jobId)).thenReturn(Optional.of(
-                new IngestJob(jobId, "tenant-A", "doc-1",
+                new IngestJob(jobId, "tenant-A", "doc-1", "1",
                         IngestJobStatus.READY, 12, 12, 12, 0, now, now, null)));
 
         mvc.perform(get("/api/ingest/{jobId}", jobId)
@@ -154,7 +154,7 @@ class IngestControllerSmokeTest {
         String jobId = UUID.randomUUID().toString();
         Instant now = Instant.parse("2026-06-17T10:10:00Z");
         when(ingestService.publish(jobId)).thenReturn(
-                new IngestJob(jobId, "tenant-A", "doc-1",
+                new IngestJob(jobId, "tenant-A", "doc-1", "1",
                         IngestJobStatus.PUBLISHED, 12, 12, 12, 0, now, now, null));
 
         mvc.perform(post("/api/ingest/{jobId}/publish", jobId)
