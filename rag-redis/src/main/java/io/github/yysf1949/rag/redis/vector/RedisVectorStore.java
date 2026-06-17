@@ -3,6 +3,8 @@ package io.github.yysf1949.rag.redis.vector;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.yysf1949.rag.core.exception.EmbeddingUnavailableException;
+import io.github.yysf1949.rag.core.exception.KbNotFoundException;
 import io.github.yysf1949.rag.core.exception.VectorStoreUnavailableException;
 import io.github.yysf1949.rag.core.model.Chunk;
 import io.github.yysf1949.rag.core.model.ChunkStatus;
@@ -165,6 +167,35 @@ public class RedisVectorStore implements VectorStore {
             long versionToSearch = resolveActiveVersion(client, tenantId, kbId, kbVersion);
             String indexAlias = ACTIVE_ALIAS_PREFIX + tenantId + ":" + kbId;
 
+            // If the resolved version has no alias (KB never published, or
+            // version was rolled back), short-circuit to KbNotFoundException
+            // so the QAService can degrade to FALLBACK_RULE + 200 (spec §10)
+            // instead of bubbling a VectorStoreUnavailableException → 503.
+            //
+            // IMPORTANT: a RediSearch alias is NOT a normal Redis key, so
+            // client.exists(alias) returns 0 even when the alias is healthy.
+            // The canonical way to probe an alias is FT.SEARCH ... LIMIT 0 0;
+            // we wrap that in try/catch and interpret IndexNotFoundException
+            // (and any "no such index" exception) as KbNotFoundException.
+            try {
+                client.ftSearch(indexAlias, "*",
+                        FTSearchParams.searchParams().limit(0, 0).dialect(2));
+            } catch (redis.clients.jedis.exceptions.JedisException ex) {
+                String msg = ex.getMessage() == null ? "" : ex.getMessage().toLowerCase();
+                if (msg.contains("no such index") || msg.contains("no such alias")
+                        || msg.contains("unknown index") || msg.contains("alias")
+                        || msg.contains("does not exist")) {
+                    throw new KbNotFoundException(
+                            "no active index for tenant=" + tenantId + " kb=" + kbId
+                                    + " v=" + versionToSearch);
+                }
+                // Real Redis error (connection / breaker / etc) — re-throw as
+                // VectorStoreUnavailable so the RagExceptionHandler still maps
+                // it to 503 with Retry-After.
+                throw new VectorStoreUnavailableException(
+                        "FT.SEARCH probe failed for alias " + indexAlias, ex);
+            }
+
             // Spec §8.1 filter order (server-side, dialect 2 pre-filter form):
             //   1. tenantId == ?      (hard wall)
             //   2. kbId == ?
@@ -305,14 +336,22 @@ public class RedisVectorStore implements VectorStore {
         if (requested > 0) {
             return requested;
         }
+        if (kbId == null || kbId.isBlank()) {
+            // No kbId supplied — caller never told us which KB to look at.
+            // Treat as "no data" rather than "infrastructure failure".
+            throw new KbNotFoundException("no kbId supplied");
+        }
         try {
             String v = client.get(indexManager.publishPointerKey(tenantId, kbId));
             if (v == null) {
-                throw new VectorStoreUnavailableException(
+                // KB was never published (or fully cleaned up) — not a redis outage.
+                throw new KbNotFoundException(
                         "no published version for tenant=" + tenantId + " kb=" + kbId);
             }
             long published = Long.parseLong(v);
             if (published <= 0) {
+                // Publish pointer is corrupt — this IS a data integrity problem
+                // (corrupt storage), so it stays a 503 VectorStoreUnavailable.
                 throw new VectorStoreUnavailableException(
                         "publish pointer corrupt for tenant=" + tenantId + " kb=" + kbId + " (v=" + v + ")");
             }

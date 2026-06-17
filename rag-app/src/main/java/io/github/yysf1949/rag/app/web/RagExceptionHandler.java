@@ -1,6 +1,7 @@
 package io.github.yysf1949.rag.app.web;
 
 import io.github.yysf1949.rag.core.exception.EmbeddingUnavailableException;
+import io.github.yysf1949.rag.core.exception.KbNotFoundException;
 import io.github.yysf1949.rag.core.exception.VectorStoreUnavailableException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -9,6 +10,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -84,6 +86,18 @@ public class RagExceptionHandler {
         return withRetryAfter(problem(HttpStatus.SERVICE_UNAVAILABLE,
                 "vector-store-unavailable",
                 "Vector store is currently unavailable. Please retry."));
+    }
+
+    /**
+     * Malformed JSON / Jackson parse failure — should be 400, not 500.
+     * Without this handler, Spring's default mapping goes to the catch-all
+     * {@link #unexpected} which returns 500.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ProblemDetail malformedJson(HttpMessageNotReadableException ex) {
+        log.info("Malformed JSON body: {}", ex.getMostSpecificCause().toString());
+        return problem(HttpStatus.BAD_REQUEST, "malformed-json",
+                "Request body is not valid JSON or has the wrong shape.");
     }
 
     @ExceptionHandler(EmbeddingUnavailableException.class)

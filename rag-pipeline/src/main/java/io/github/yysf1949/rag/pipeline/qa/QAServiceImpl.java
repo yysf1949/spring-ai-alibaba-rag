@@ -4,6 +4,7 @@ import io.github.resilience4j.ratelimiter.RateLimiter;
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import io.github.yysf1949.rag.core.exception.EmbeddingUnavailableException;
+import io.github.yysf1949.rag.core.exception.KbNotFoundException;
 import io.github.yysf1949.rag.core.exception.LlmUnavailableException;
 import io.github.yysf1949.rag.core.exception.RerankUnavailableException;
 import io.github.yysf1949.rag.core.exception.VectorStoreUnavailableException;
@@ -535,14 +536,29 @@ public class QAServiceImpl implements QAService {
         // the VectorStore port resolves that internally.
         String kbId = query.kbVersion() == null ? null : query.kbVersion().kbId();
         long version = query.kbVersion() == null ? -1L : query.kbVersion().version();
-        return vectorStore.search(
-                vec,
-                query.tenantId(),
-                kbId,
-                version,
-                new ArrayList<>(query.permissionTags()),
-                io.github.yysf1949.rag.core.model.PermissionMode.AND,
-                topK);
+        try {
+            return vectorStore.search(
+                    vec,
+                    query.tenantId(),
+                    kbId,
+                    version,
+                    new ArrayList<>(query.permissionTags()),
+                    io.github.yysf1949.rag.core.model.PermissionMode.AND,
+                    topK);
+        } catch (KbNotFoundException knf) {
+            // Spec §10: missing KB / never-published / nonexistent tenant is a
+            // logical "no data" condition, NOT a vector-store outage. Downgrade
+            // to empty retrieval so Step 5 (rerank) sees isEmpty() and routes
+            // us to emptyRetrievalAnswer → FALLBACK_RULE + 200.
+            log.info("QA kb-not-found tenant={} kbId={} err={} — falling back to FALLBACK_RULE",
+                    query.tenantId(), kbId, knf.getMessage());
+            Counter.builder("rag.qa.degradation.total")
+                    .tag("tenant", query.tenantId())
+                    .tag("reason", "kb_not_found")
+                    .register(meterRegistry)
+                    .increment();
+            return List.of();
+        }
     }
 
     /** Step 5: rerank (TopK → TopN). Throws RerankUnavailableException — caller catches. */
