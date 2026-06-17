@@ -167,50 +167,6 @@ public class RedisVectorStore implements VectorStore {
             long versionToSearch = resolveActiveVersion(client, tenantId, kbId, kbVersion);
             String indexAlias = ACTIVE_ALIAS_PREFIX + tenantId + ":" + kbId;
 
-            // If the resolved version has no alias (KB never published, or
-            // version was rolled back), short-circuit to KbNotFoundException
-            // so the QAService can degrade to FALLBACK_RULE + 200 (spec §10)
-            // instead of bubbling a VectorStoreUnavailableException → 503.
-            //
-            // IMPORTANT: a RediSearch alias is NOT a normal Redis key, so
-            // client.exists(alias) returns 0 even when the alias is healthy.
-            // The canonical way to probe an alias is FT.SEARCH ... LIMIT 0 0;
-            // we wrap that in try/catch and interpret IndexNotFoundException
-            // (and any "no such index" exception) as KbNotFoundException.
-            try {
-                client.ftSearch(indexAlias, "*",
-                        FTSearchParams.searchParams().limit(0, 0).dialect(2));
-            } catch (redis.clients.jedis.exceptions.JedisException ex) {
-                String msg = ex.getMessage() == null ? "" : ex.getMessage().toLowerCase();
-                if (msg.contains("no such index") || msg.contains("no such alias")
-                        || msg.contains("unknown index") || msg.contains("alias")
-                        || msg.contains("does not exist")) {
-                    throw new KbNotFoundException(
-                            "no active index for tenant=" + tenantId + " kb=" + kbId
-                                    + " v=" + versionToSearch);
-                }
-                // Real Redis error (connection / breaker / etc) — re-throw as
-                // VectorStoreUnavailable so the RagExceptionHandler still maps
-                // it to 503 with Retry-After.
-                throw new VectorStoreUnavailableException(
-                        "FT.SEARCH probe failed for alias " + indexAlias, ex);
-            }
-
-            // Spec §8.1 filter order (server-side, dialect 2 pre-filter form):
-            //   1. tenantId == ?      (hard wall)
-            //   2. kbId == ?
-            //   3. documentVersion <= ? (caller's ceiling — supports reads on a pinned older version)
-            //   4. status == ACTIVE
-            //   5. permissionTags (server-side INTERSECTION pre-filter for both AND and OR)
-            //   6. publishedAt <= now
-            //
-            // RediSearch semantics for TAG fields:
-            //   @permissionTags:{a}        ⇒ chunk.permissionTags contains a
-            //   @permissionTags:{a|b|c}    ⇒ chunk.permissionTags contains at least one of a, b, c
-            // There is no native RediSearch syntax for "chunk must contain ALL of userTags"
-            // (spec §8.2 AND mode ⇒ user's tag set must ⊇ chunk's tag set). For AND
-            // we run the server-side INTERSECTION pre-filter, then enforce the
-            // superset check client-side in {@link #applyAndPermissionFilter}.
             long nowSec = System.currentTimeMillis() / 1000L;
             String filter = buildPreFilter(tenantId, kbId, versionToSearch,
                     userPermissionTags, permissionMode, nowSec);
@@ -232,30 +188,54 @@ public class RedisVectorStore implements VectorStore {
                     .withScores()
                     .limit(0, fetchLimit);
 
-            try {
-                // Wrap the Jedis/RediSearch call in a circuit breaker (when wired).
-                // The breaker counts every JedisException / ConnectionException that
-                // falls through to VectorStoreUnavailableException; once the trip
-                // threshold is hit, subsequent calls short-circuit and we spare Redis
-                // from the hammering that usually accompanies an outage.
-                java.util.function.Supplier<SearchResult> upstream =
-                        () -> client.ftSearch(indexAlias, knnQuery, params);
-                java.util.function.Supplier<SearchResult> guarded =
-                        (circuitBreaker == null) ? upstream
-                                : CircuitBreaker.decorateSupplier(circuitBreaker, upstream);
+            // Wrap ALL Redis calls (alias probe + KNN search) in a circuit breaker.
+            // The breaker counts every JedisException / ConnectionException that
+            // falls through to VectorStoreUnavailableException; once the trip
+            // threshold is hit, subsequent calls short-circuit and we spare Redis
+            // from the hammering that usually accompanies an outage.
+            java.util.function.Supplier<List<Chunk>> upstream = () -> {
+                // Step 1: alias probe — verify the active index exists.
                 try {
-                    SearchResult result = guarded.get();
-                    List<Chunk> raw = mapResultToChunks(client, result, tenantId, kbId);
-                    return applyAndPermissionFilter(raw, userPermissionTags, permissionMode, topK);
-                } catch (CallNotPermittedException ex) {
-                    // Breaker OPEN — let the typed message bubble up unchanged so
-                    // operators can tell "tripped" from "upstream failed" in logs.
+                    client.ftSearch(indexAlias, "*",
+                            FTSearchParams.searchParams().limit(0, 0).dialect(2));
+                } catch (redis.clients.jedis.exceptions.JedisException ex) {
+                    String msg = ex.getMessage() == null ? "" : ex.getMessage().toLowerCase();
+                    if (msg.contains("no such index") || msg.contains("no such alias")
+                            || msg.contains("unknown index") || msg.contains("alias")
+                            || msg.contains("does not exist")) {
+                        throw new KbNotFoundException(
+                                "no active index for tenant=" + tenantId + " kb=" + kbId
+                                        + " v=" + versionToSearch);
+                    }
+                    // Real Redis error (connection / breaker / etc) — the CB
+                    // records this failure because VectorStoreUnavailableException
+                    // is in its recordExceptions list.
                     throw new VectorStoreUnavailableException(
-                            "Redis circuit breaker OPEN — skipping search for tenant=" + tenantId
-                                    + " kb=" + kbId, ex);
+                            "FT.SEARCH probe failed for alias " + indexAlias, ex);
                 }
+                // Step 2: KNN search
+                SearchResult searchResult = client.ftSearch(indexAlias, knnQuery, params);
+                List<Chunk> raw = mapResultToChunks(client, searchResult, tenantId, kbId);
+                return applyAndPermissionFilter(raw, userPermissionTags, permissionMode, topK);
+            };
+
+            java.util.function.Supplier<List<Chunk>> guarded =
+                    (circuitBreaker == null) ? upstream
+                            : CircuitBreaker.decorateSupplier(circuitBreaker, upstream);
+            try {
+                return guarded.get();
+            } catch (CallNotPermittedException ex) {
+                // Breaker OPEN — let the typed message bubble up unchanged so
+                // operators can tell "tripped" from "upstream failed" in logs.
+                throw new VectorStoreUnavailableException(
+                        "Redis circuit breaker OPEN — skipping search for tenant=" + tenantId
+                                + " kb=" + kbId, ex);
+            } catch (KbNotFoundException ex) {
+                // Logical (not infrastructural) — let QAService degrade to
+                // FALLBACK_RULE without tripping the breaker.
+                throw ex;
             } catch (VectorStoreUnavailableException ex) {
-                // Already a typed exception (e.g. from the breaker above) — don't re-wrap.
+                // Already a typed exception (e.g. from the probe above) — don't re-wrap.
                 throw ex;
             } catch (Exception e) {
                 throw new VectorStoreUnavailableException(
