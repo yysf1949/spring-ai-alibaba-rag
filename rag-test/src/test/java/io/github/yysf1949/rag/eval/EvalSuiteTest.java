@@ -103,7 +103,8 @@ class EvalSuiteTest {
         // Assert: at least 50% pass rate
         long passed = results.stream().filter(EvalResult::pass).count();
         double passRate = results.isEmpty() ? 0 : (double) passed / results.size();
-        log.info("Eval suite: {}/{} passed ({:.1%})", passed, results.size(), passRate);
+        log.info("Eval suite: {}/{} passed ({}%)", passed, results.size(),
+                String.format("%.0f", passRate * 100));
         assertTrue(passRate >= 0.5,
                 "Eval pass rate must be >= 50%, got " + String.format("%.1f", passRate * 100) + "%");
     }

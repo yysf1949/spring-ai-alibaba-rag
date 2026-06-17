@@ -40,6 +40,7 @@ public final class DefaultPromptTemplate implements PromptTemplate {
         StringBuilder sb = new StringBuilder();
         sb.append("你是企业知识库助手。基于以下参考资料回答问题。");
         sb.append("如果答案不在参考资料中，请回答\"不知道\"，不要编造。");
+        sb.append("请直接引用资料原文中的关键短语和事实，不要改变原文表达。");
         sb.append("在答案中用 [N] 标记引用来源，N 对应下方参考资料的编号。\n\n");
         sb.append("【参考资料】\n");
         sb.append(body);
