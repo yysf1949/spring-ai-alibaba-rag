@@ -110,6 +110,7 @@
                         <id>repackage</id>
                         <configuration>
                             <skip>true</skip>
+                            <mainClass>io.github.yysf1949.rag.app.RagAppApplication</mainClass>
                         </configuration>
                     </execution>
                     <execution>
@@ -119,6 +120,7 @@
                         </goals>
                         <configuration>
                             <classifier>boot</classifier>
+                            <mainClass>io.github.yysf1949.rag.app.RagAppApplication</mainClass>
                         </configuration>
                     </execution>
                 </executions>

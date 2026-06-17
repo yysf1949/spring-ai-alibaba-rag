@@ -130,7 +130,8 @@ public class IngestServiceImpl implements IngestService {
 
     @Override
     public IngestJob ingestSync(Document document) {
-        IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId(), document.documentVersion());
+        String compositeDocumentId = encodeDocumentId(document.kbId(), document.documentId());
+        IngestJob job = IngestJob.newPending(document.tenantId(), compositeDocumentId, document.documentVersion());
         jobRepository.save(job);
         // Pin jobId on MDC for the entire sync run (cleared in finally).
         PipelineMdc.put(PipelineMdc.KEY_JOB_ID, job.jobId());
@@ -150,7 +151,14 @@ public class IngestServiceImpl implements IngestService {
 
     @Override
     public IngestJob ingestAsync(Document document) {
-        IngestJob job = IngestJob.newPending(document.tenantId(), document.documentId(), document.documentVersion());
+        // Encode (kbId, documentId) as "kbId/documentId" so extractKbId() can
+        // recover the kbId at publish() time. The Document model carries kbId
+        // but IngestJob doesn't (carries only documentId), so this single
+        // encoded string keeps the route kbId → publish() honest without a
+        // wider schema change. The original kbId/docId are still recoverable
+        // via extractKbId() and extractDocumentId().
+        String compositeDocumentId = encodeDocumentId(document.kbId(), document.documentId());
+        IngestJob job = IngestJob.newPending(document.tenantId(), compositeDocumentId, document.documentVersion());
         jobRepository.save(job);
         // MDC is thread-local — the executor thread does NOT inherit the
         // HTTP-thread MDC (tenant / requestId). Snapshot now so the

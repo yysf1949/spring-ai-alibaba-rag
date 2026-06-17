@@ -1434,3 +1434,64 @@ chokepoint. The latter either under-limits (misses cached / fast paths) or over-
 | `mvn test -Peval -pl rag-test` | Run EvalSuiteTest (requires env vars) |
 | `SILICONFLOW_API_KEY=xxx RAG_REDIS_HOST=localhost EVAL_SUITE=1 mvn test -Peval -pl rag-test` | Run with real SiliconFlow + Redis |
 | `cat docs/eval/eval-report.json` | View last run results |
+## §15 — End-to-end tenant isolation 真测发现的 4 个 bug（2026-06-17）
+
+**触发动作**：cluster 1 (F1 多租户隔离) 7 个用例的真测矩阵。
+**意外收获**：4 个 CRITICAL/HIGH bug，3 个是 retrieve 全断的根因。
+
+### Bug #1 (HIGH) — publish alias 用错的 kbId
+
+**症状**：QA 查 `rag:active:{tenant}:{kbId}` 返回 503 no such index。
+
+**根因**：`IngestServiceImpl.extractKbId()` 在 `documentId` 没 "/" 前缀时
+fallback 到 `"default-kb"`，让所有非 "kbId/docId" 编码的 document 走默认 alias。
+
+**修复**（commit 9b80f21 + 本次 commit）：
+- `ingestSync` / `ingestAsync` 内部用 `encodeDocumentId(doc.kbId(), doc.documentId())`
+  把 kbId 编进 documentId，再 `newPending(...)`，让 extractKbId 永远能找到 kbId。
+- 加注释解释这条约定的来源（Document model 没有独立 kbId 字段）。
+
+### Bug #2 (HIGH) — StubEmbeddingGateway DIM=16 不匹配 schema DIM=1024
+
+**症状**：ingest log 显示 "1 written" 但 publish log "promoted 0 chunks from staging"，
+`FT.INFO` num_docs=0。
+
+**根因**：`StubEmbeddingGateway.DIM = 16` 是 stub fallback 默认值，但
+`RedisIndexManager.DEFAULT_DIM = 1024`（SiliconFlow BAAI/bge-m3）。
+HSET 写 binary embedding 不报错（RediSearch 接受 raw bytes），但索引过程中
+dim 不匹配静默 skip，索引永远是 0 docs。
+
+**修复**（本 commit）：`StubEmbeddingGateway.DIM = 1024`，加 javadoc 警告
+两个常量必须同步。
+
+### Bug #3 (CRITICAL) — StubEmbeddingGateway `newZeroVec` 算法垃圾
+
+**症状**：dim 对齐后 retrieve 仍 0 chunks。cosine(chunk, query) = -0.62（几乎完全反相关）。
+
+**根因**：原算法 `Math.sin((seed + i) * 0.1)`，周期 2π/0.1 ≈ 63，对 dim=1024
+所有 i 维 sin 值几乎相同。chunk vs query 唯一区别是 seed hash，导致两个
+不同文本的 vector 在所有维度上 sin 相位差不多，dot product 接近 -1（反相关）。
+
+**修复**（本 commit）：`Math.sin((hashCode ^ (i * GOLDEN_RATIO)) * 0.0001)`，
+每个 dim 用不同 salt，保证：相同 text → cosine=1；不同 text → 多维 sin
+相位乱分布，cosine 落在 (-0.5, 0.5) 区间，足以让 KNN 区分。
+
+### Bug #4 (MEDIUM) — `mvn -pl rag-app -am spring-boot:run` 启动失败
+
+**症状**：`Unable to find a suitable main class on project spring-ai-alibaba-rag`。
+**根因**：parent pom pluginManagement 里有 spring-boot-maven-plugin，
+Maven 把 spring-boot:run mojo 误绑到 parent project (packaging=pom)。
+**绕开**：`java -jar ~/.m2/repository/.../rag-app-0.1.0-SNAPSHOT-boot.jar` 启动。
+**待修**：要把 spring-boot-maven-plugin 从 parent pluginManagement 移走，
+或者让 parent `<packaging>pom</packaging>` 排除 spring-boot 插件。
+
+### Spring-boot run tip
+
+```
+JAVA_HOME=/home/butterfly443/jdk/jdk-21.0.2 \
+  java -Dserver.port=18081 \
+  -jar ~/.m2/repository/io/github/yysf1949/rag/rag-app/0.1.0-SNAPSHOT/rag-app-0.1.0-SNAPSHOT-boot.jar
+```
+
+端口 8080 被 proxy.py (PID 1996542) 占用，所以实测都用 18081。
+

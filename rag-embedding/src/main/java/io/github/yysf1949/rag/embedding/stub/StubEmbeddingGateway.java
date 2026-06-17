@@ -21,7 +21,14 @@ import java.util.concurrent.ConcurrentMap;
  */
 public class StubEmbeddingGateway implements EmbeddingGateway {
 
-    public static final int DIM = 16;
+    /**
+     * Default dim matches the RediSearch schema declared in
+     * {@code io.github.yysf1949.rag.redis.vector.RedisIndexManager#DEFAULT_DIM} (1024).
+     * The two MUST stay in sync — a mismatch silently drops every chunk during
+     * index ingest (RediSearch refuses to index a VECTOR field whose byte length
+     * does not match {@code DIM * sizeof(FLOAT32)}).
+     */
+    public static final int DIM = 1024;
 
     private final ConcurrentMap<String, float[]> cache = new ConcurrentHashMap<>();
 
@@ -49,10 +56,19 @@ public class StubEmbeddingGateway implements EmbeddingGateway {
 
     private static float[] newZeroVec(int dim, String text) {
         float[] v = new float[dim];
-        // per-text fingerprint so cosine is well-defined across distinct texts
-        int seed = text.hashCode();
+        // Per-dim fingerprint: every dimension sees the SAME text but a different
+        // hash salt. This guarantees:
+        //   (a) identical text → identical vector (cosine = 1)
+        //   (b) any text change → different vector in many dims (random-ish cosine)
+        // which is exactly what a deterministic stub needs to support rank-preserving
+        // KNN retrieval. (Pre-change code used a single global seed, which collapsed
+        // every dimension onto the same sin() phase and made KNN retrieval random.)
+        // Use Java's String.hashCode() semantics (truncated to 32 bits) so the
+        // Python test harness can reproduce — but the JVM is the production source
+        // of truth, so tests align by recomputing with the same algorithm.
         for (int i = 0; i < dim; i++) {
-            v[i] = (float) Math.sin((seed + i) * 0.1);
+            int seed = text.hashCode() ^ (i * 0x9E3779B9);
+            v[i] = (float) Math.sin(seed * 0.0001);
         }
         return v;
     }
