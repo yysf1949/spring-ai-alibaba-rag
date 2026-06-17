@@ -71,8 +71,12 @@ public class RedisAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public VectorStore redisVectorStore(RedisConnection connection,
-                                        RedisIndexManager indexManager) {
-        return new RedisVectorStore(connection, indexManager);
+                                        RedisIndexManager indexManager,
+                                        io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry circuitBreakerRegistry) {
+        return new RedisVectorStore(
+                connection, indexManager,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                circuitBreakerRegistry);
     }
 
     @Bean

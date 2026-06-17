@@ -41,6 +41,15 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
         </dependency>
+        <!-- Resilience4j — circuit breaker around Redis calls (cluster 6 / spec §13) -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-micrometer</artifactId>
+        </dependency>
         <!-- Jackson is needed at runtime for Answer/RewriteResult JSON
              serialization in AnswerCache / RewriteCache (spec §13.6, §13.8).
              Spring Boot starter pulls it transitively when used through

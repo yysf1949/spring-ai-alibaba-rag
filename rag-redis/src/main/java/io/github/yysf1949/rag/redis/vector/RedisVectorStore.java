@@ -1,5 +1,8 @@
 package io.github.yysf1949.rag.redis.vector;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.yysf1949.rag.core.exception.VectorStoreUnavailableException;
 import io.github.yysf1949.rag.core.model.Chunk;
 import io.github.yysf1949.rag.core.model.ChunkStatus;
@@ -56,15 +59,35 @@ public class RedisVectorStore implements VectorStore {
     private final RedisConnection connection;
     private final RedisIndexManager indexManager;
     private final MeterRegistry meterRegistry;
+    private final CircuitBreaker circuitBreaker; // may be null in hermetic tests
 
     public RedisVectorStore(RedisConnection connection, RedisIndexManager indexManager) {
-        this(connection, indexManager, new SimpleMeterRegistry());
+        this(connection, indexManager, new SimpleMeterRegistry(), null);
     }
 
     public RedisVectorStore(RedisConnection connection, RedisIndexManager indexManager, MeterRegistry meterRegistry) {
+        this(connection, indexManager, meterRegistry, null);
+    }
+
+    /**
+     * Production constructor — wires the {@code redis} circuit breaker from
+     * the auto-configured {@link CircuitBreakerRegistry}. The breaker trips
+     * when consecutive Redis failures (connection refused, JedisException)
+     * exceed the threshold configured in {@code application.yml} under
+     * {@code resilience4j.circuitbreaker.instances.redis}. While OPEN, calls
+     * short-circuit with {@link CallNotPermittedException}, mapped to
+     * {@link VectorStoreUnavailableException} — the same type the inner
+     * catch-all produces, so callers degrade uniformly to "no results".
+     */
+    public RedisVectorStore(RedisConnection connection,
+                            RedisIndexManager indexManager,
+                            MeterRegistry meterRegistry,
+                            CircuitBreakerRegistry circuitBreakerRegistry) {
         this.connection = connection;
         this.indexManager = indexManager;
         this.meterRegistry = meterRegistry;
+        this.circuitBreaker = (circuitBreakerRegistry == null) ? null
+                : circuitBreakerRegistry.circuitBreaker("redis");
     }
 
     // ─── upsert ────────────────────────────────────────────────────────────
@@ -179,7 +202,25 @@ public class RedisVectorStore implements VectorStore {
                     .limit(0, fetchLimit);
 
             try {
-                SearchResult result = client.ftSearch(indexAlias, knnQuery, params);
+                // Wrap the Jedis/RediSearch call in a circuit breaker (when wired).
+                // The breaker counts every JedisException / ConnectionException that
+                // falls through to VectorStoreUnavailableException; once the trip
+                // threshold is hit, subsequent calls short-circuit and we spare Redis
+                // from the hammering that usually accompanies an outage.
+                java.util.function.Supplier<SearchResult> upstream =
+                        () -> client.ftSearch(indexAlias, knnQuery, params);
+                java.util.function.Supplier<SearchResult> guarded =
+                        (circuitBreaker == null) ? upstream
+                                : CircuitBreaker.decorateSupplier(circuitBreaker, upstream);
+                SearchResult result;
+                try {
+                    result = guarded.get();
+                } catch (CallNotPermittedException ex) {
+                    // Breaker OPEN — don't even attempt Redis.
+                    throw new VectorStoreUnavailableException(
+                            "Redis circuit breaker OPEN — skipping search for tenant=" + tenantId
+                                    + " kb=" + kbId, ex);
+                }
                 List<Chunk> raw = mapResultToChunks(client, result, tenantId, kbId);
                 return applyAndPermissionFilter(raw, userPermissionTags, permissionMode, topK);
             } catch (Exception e) {

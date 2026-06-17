@@ -43,6 +43,45 @@ logging:
     io.github.yysf1949.rag: INFO
     org.springframework.web: INFO
 
+# ─────────────────────────────────────────────────────────────────
+# Phase 7 cluster 6 — Resilience4j circuit breakers (spec §13)
+# Two instances wrap the two external surfaces that can fail loudly:
+#   - redis:     Redis Stack / RediSearch (vector store + caches)
+#   - siliconflow: SiliconFlow HTTP (embedding + rerank + LLM fallback)
+# While OPEN, calls short-circuit and we surface the typed *UnavailableException
+# so the upstream caller (QAService) degrades uniformly (FALLBACK_RULE / empty).
+# Tuning is conservative — RAG has high latency (multi-second embedding/search)
+# so we count failures, not time, and recover quickly.
+# ─────────────────────────────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      redis:
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        recordExceptions:
+          - io.github.yysf1949.rag.core.exception.VectorStoreUnavailableException
+          - redis.clients.jedis.exceptions.JedisException
+      siliconflow:
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 15s
+        permittedNumberOfCallsInHalfOpenState: 2
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        recordExceptions:
+          - io.github.yysf1949.rag.core.exception.EmbeddingUnavailableException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - java.util.concurrent.TimeoutException
+
 # Spec §9.1: rag.qa.* / rag.ingest.* etc. land in the metric-wiring
 # phase. For now Spring Boot's auto-publish of jvm.*, http.server.*
 # and the actuator's own /actuator/prometheus are available.

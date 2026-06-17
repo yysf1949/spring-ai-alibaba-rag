@@ -17,6 +17,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -82,9 +83,14 @@ public class SiliconFlowAutoConfiguration {
     public EmbeddingGateway siliconFlowEmbeddingGateway(
             WebClient siliconFlowWebClient,
             SiliconFlowProperties props,
-            ObjectProvider<EmbeddingCache> cacheProvider) {
+            ObjectProvider<EmbeddingCache> cacheProvider,
+            io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry circuitBreakerRegistry) {
         EmbeddingCache cache = cacheProvider.getIfAvailable();
-        return new SiliconFlowEmbeddingGateway(siliconFlowWebClient, props, cache);
+        return new SiliconFlowEmbeddingGateway(
+                siliconFlowWebClient, props, cache,
+                Duration.ofSeconds(1), Duration.ofSeconds(5),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                circuitBreakerRegistry);
     }
 
     @Bean
