@@ -56,6 +56,51 @@
         </encoder>
     </appender>
 
+    <!-- Audit channel — dedicated appender chain. The audit logger is
+         additivity-disabled so audit events NEVER pollute the application
+         console (compliance readers should not have to grep past business
+         logs). The file appender writes to logs/audit.log (rolling daily,
+         90-day retain — see checklist §9 audit retention 6 months, logback
+         defaults are 30 days, ops can extend in production by overriding
+         maxHistory). The console appender is gated by setting the system
+         property AUDIT_TO_CONSOLE=1; we keep it ALWAYS wired and let the
+         logback <filter> drop the line when the property is unset, which
+         is portable across all logback versions and doesn't need the
+         janino conditional plug-in. -->
+    <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${AUDIT_FILE:-logs/audit.log}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${AUDIT_FILE:-logs/audit.log}.%d{yyyy-MM-dd}.gz</fileNamePattern>
+            <maxHistory>90</maxHistory>
+            <totalSizeCap>5GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <!-- The audit message is already a kv payload — print it
+                 verbatim with a timestamp + level prefix. Compliance
+                 tooling can split the line on the first space. -->
+            <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %5p %X{audit.tenant:-__global__} %X{audit.actor:-} %X{audit.requestId:-} %X{audit.resource:-} %m%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="AUDIT_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <!-- Drop everything below INFO unless AUDIT_TO_CONSOLE=1.
+                 ThresholdFilter's level is the MIN level to keep; we set
+                 it to OFF when the env var is unset and INFO when set. -->
+            <level>${AUDIT_TO_CONSOLE:-OFF}</level>
+        </filter>
+        <encoder>
+            <pattern>[audit] %d{HH:mm:ss.SSS} %X{audit.tenant:-__global__} %m%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <logger name="audit" level="INFO" additivity="false">
+        <appender-ref ref="AUDIT_FILE"/>
+        <appender-ref ref="AUDIT_CONSOLE"/>
+    </logger>
+
     <!-- Default: console text. Switch via env var LOG_FORMAT=json. -->
     <root level="INFO">
         <appender-ref ref="${LOG_APPENDER:-CONSOLE_TEXT}"/>

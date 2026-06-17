@@ -48,9 +48,11 @@ import org.springframework.context.annotation.Configuration;
 public class RedisAutoConfiguration {
 
     @Bean(destroyMethod = "shutdown")
-    @ConditionalOnMissingBean
-    public RedisConnection redisConnection(RedisProperties properties) {
-        return new RedisConnection(properties);
+    @org.springframework.beans.factory.annotation.Autowired
+    public RedisConnection redisConnection(RedisProperties properties,
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+                    javax.net.ssl.SSLSocketFactory sslSocketFactory) {
+        return new RedisConnection(properties, sslSocketFactory);
     }
 
     @Bean

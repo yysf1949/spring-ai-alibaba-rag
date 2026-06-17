@@ -1,9 +1,16 @@
 package io.github.yysf1949.rag.app.web;
 
+import io.github.yysf1949.rag.app.audit.AuditChannel;
 import io.github.yysf1949.rag.app.config.MdcTenantFilter;
+import io.github.yysf1949.rag.core.model.AuditEvent;
 import io.github.yysf1949.rag.core.model.Document;
 import io.github.yysf1949.rag.core.model.IngestJob;
+import io.github.yysf1949.rag.core.model.IngestJobStatus;
 import io.github.yysf1949.rag.core.port.IngestService;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
+import io.micrometer.core.instrument.Timer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -26,9 +33,11 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-
 /**
  * REST surface for the asynchronous ingest pipeline — design spec §6.3.
  *
@@ -63,9 +72,16 @@ import java.util.Set;
 public class IngestController {
 
     private final IngestService ingestService;
+    private final AuditChannel audit;
+    private final MeterRegistry meterRegistry;
 
-    public IngestController(IngestService ingestService) {
+    public IngestController(
+            IngestService ingestService,
+            AuditChannel audit,
+            MeterRegistry meterRegistry) {
         this.ingestService = ingestService;
+        this.audit = audit;
+        this.meterRegistry = meterRegistry;
     }
 
     @PostMapping
@@ -87,22 +103,91 @@ public class IngestController {
             HttpServletRequest request,
             @Valid @RequestBody IngestRequest body) {
         String tenant = requiredTenant(request, tenantHeader);
-        Document doc = new Document(
-                tenant,
-                body.kbId,
-                body.documentId,
-                String.valueOf(body.documentVersion),
-                body.title,
-                body.sourceUri,
-                body.permissionTags == null ? Set.of() : Set.copyOf(body.permissionTags),
-                body.sections == null ? List.of()
-                        : body.sections.stream()
-                                .map(s -> new Document.Section(
-                                        resolveHeading(s),
-                                        s.content == null ? "" : s.content))
-                                .toList());
-        IngestJob job = ingestService.ingestAsync(doc);
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+        // C9.2 — start the request-level timer. We use a single timer
+        // record(ingest_duration_ms) but with a tenant+kbId tag so the
+        // dashboard can split by KB. We can't know the FINAL job status
+        // synchronously (the heavy work runs on the executor), so we only
+        // time the HTTP submission itself here; the per-job outcome is
+        // counted via rag.ingest.documents.total (incremented in submit)
+        // and rag.ingest.failures.total (incremented in the controller's
+        // exception handler / 4xx path). The pipeline-layer timers in
+        // IngestServiceImplMetricsTest remain the source of truth for
+        // the actual split/embed/publish stages.
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String requestId = MdcTenantFilter.requestId(request);
+        try {
+            Document doc = new Document(
+                    tenant,
+                    body.kbId,
+                    body.documentId,
+                    String.valueOf(body.documentVersion),
+                    body.title,
+                    body.sourceUri,
+                    body.permissionTags == null ? Set.of() : Set.copyOf(body.permissionTags),
+                    body.sections == null ? List.of()
+                            : body.sections.stream()
+                                    .map(s -> new Document.Section(
+                                            resolveHeading(s),
+                                            s.content == null ? "" : s.content))
+                                    .toList());
+            IngestJob job = ingestService.ingestAsync(doc);
+            // C9.2 — count the document submission, tagged by tenant + kbId
+            // + initial status. Operators alert on a sudden drop in this
+            // counter (a stuck ingest pipeline would manifest as no new
+            // submissions even though HTTP is healthy).
+            meterRegistry.counter(
+                    "rag.ingest.documents.total",
+                    Tags.of("tenant", tenant, "kbId", body.kbId,
+                            "outcome", job.status().name()))
+                    .increment();
+            // Audit — KB_INGEST (admin action: a tenant just submitted a
+            // document for processing). We record the documentId +
+            // version + section count so an auditor can reconstruct the
+            // exact submission later. The actorId is the X-User-Id
+            // header (gateway-injected) — fall back to "anonymous" for
+            // unauthenticated dev traffic.
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("documentId", body.documentId);
+            fields.put("documentVersion", body.documentVersion);
+            fields.put("sectionCount", body.sections == null ? 0 : body.sections.size());
+            fields.put("permissionTags", body.permissionTags == null
+                    ? List.of() : body.permissionTags);
+            audit.record(AuditEvent.of(
+                    AuditEvent.Type.KB_INGEST,
+                    tenant,
+                    request.getHeader("X-User-Id"),
+                    requestId,
+                    job.jobId(),
+                    job.status() == IngestJobStatus.FAILED ? "FAILURE" : "SUCCESS",
+                    fields));
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+        } catch (RuntimeException ex) {
+            // C9.2 — failures before the job is even persisted.
+            meterRegistry.counter(
+                    "rag.ingest.failures.total",
+                    Tags.of("tenant", tenant, "kbId", body.kbId,
+                            "stage", "submit"))
+                    .increment();
+            // Audit — KB_INGEST with FAILURE outcome so the compliance
+            // log captures that the request FAILED (not just that one
+            // was attempted).
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("error", ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            fields.put("documentId", body.documentId);
+            audit.record(AuditEvent.of(
+                    AuditEvent.Type.KB_INGEST,
+                    tenant,
+                    request.getHeader("X-User-Id"),
+                    requestId,
+                    null,
+                    "FAILURE",
+                    fields));
+            throw ex;
+        } finally {
+            sample.stop(meterRegistry.timer(
+                    "rag.ingest.http.submit.duration",
+                    Tags.of("tenant", tenant)));
+        }
     }
 
     @GetMapping("/{jobId}")
@@ -132,8 +217,71 @@ public class IngestController {
                     content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
     })
     public IngestJob publish(HttpServletRequest request, @PathVariable String jobId) {
-        requiredTenant(request, request.getHeader(MdcTenantFilter.HEADER_TENANT));
-        return ingestService.publish(jobId);
+        String tenant = requiredTenant(request, request.getHeader(MdcTenantFilter.HEADER_TENANT));
+        String requestId = MdcTenantFilter.requestId(request);
+        String actor = request.getHeader("X-User-Id");
+        Timer.Sample sample = Timer.start(meterRegistry);
+        try {
+            IngestJob job = ingestService.publish(jobId);
+            // C9.2 — a successful publish is the most consequential
+            // ingest event (it flips the active index live), so we count
+            // it on its own tag so the dashboard can show "publishes per
+            // minute" alongside the document-submission counter. The
+            // IngestJob record doesn't carry kbId directly (the
+            // controller's job is the source of truth on the wire), so
+            // we tag with kbVersion as a stable secondary dimension.
+            meterRegistry.counter(
+                    "rag.ingest.documents.total",
+                    Tags.of("tenant", tenant,
+                            "kbVersion", job.kbVersion() == null ? "unknown" : job.kbVersion(),
+                            "outcome", "PUBLISHED"))
+                    .increment();
+            // Audit — KB_PUBLISH. This is the single most important
+            // audit event in the system: it marks the moment a KB
+            // version went live and is now serving traffic. Auditors
+            // reconstruct "when did this content become visible to
+            // users?" purely from this event.
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("kbVersion", job.kbVersion());
+            fields.put("documentId", job.documentId());
+            fields.put("totalChunks", job.totalChunks());
+            fields.put("embeddedChunks", job.embeddedChunks());
+            fields.put("upsertedChunks", job.upsertedChunks());
+            fields.put("failedChunks", job.failedChunks());
+            audit.record(AuditEvent.of(
+                    AuditEvent.Type.KB_PUBLISH,
+                    tenant,
+                    actor,
+                    requestId,
+                    jobId,
+                    "SUCCESS",
+                    fields));
+            return job;
+        } catch (RuntimeException ex) {
+            // C9.2 — publish failures are critical (the operator
+            // expected the KB to flip and it didn't) so we count them
+            // on a dedicated tag.
+            meterRegistry.counter(
+                    "rag.ingest.failures.total",
+                    Tags.of("tenant", tenant, "kbId", "unknown",
+                            "stage", "publish"))
+                    .increment();
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("error", ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            audit.record(AuditEvent.of(
+                    AuditEvent.Type.KB_PUBLISH,
+                    tenant,
+                    actor,
+                    requestId,
+                    jobId,
+                    "FAILURE",
+                    fields));
+            throw ex;
+        } finally {
+            sample.stop(meterRegistry.timer(
+                    "rag.ingest.http.publish.duration",
+                    Tags.of("tenant", tenant)));
+        }
     }
 
     /**

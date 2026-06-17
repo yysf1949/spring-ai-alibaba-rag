@@ -6,6 +6,16 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 5s
+      # Redis TLS — enabled by setting REDIS_TLS_ENABLED=true + providing
+      # a trust store via REDIS_TLS_TRUSTSTORE / REDIS_TLS_TRUSTSTORE_PASSWORD.
+      # Spring Data Redis (Lettuce) reads these and applies the SSL
+      # parameters via the LettuceClientConfigurationBuilderCustomizer SPI
+      # in rag-redis/.../config/RedisSslAutoConfiguration. The SSL config
+      # is opt-in (default disabled) because local docker-compose does
+      # not run TLS — flip the env var in production / staging. See
+      # docs/RUNBOOK.md §6 for the full rollout procedure.
+      ssl:
+        enabled: ${REDIS_TLS_ENABLED:false}
   # DashScope key placeholder — required by Spring AI Alibaba auto-config
   # bean construction, but the rag-app's actual LLM/Embedding/Rerank calls
   # go through the SiliconFlow adapters (rag-embedding/siliconflow/*) when

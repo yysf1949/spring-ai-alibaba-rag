@@ -59,4 +59,26 @@ public class MdcTenantFilter extends OncePerRequestFilter {
             MDC.remove(MDC_REQUEST_ID);
         }
     }
+
+    /**
+     * Read the {@code X-Request-Id} from the request, or generate a new
+     * UUID if the client did not supply one. Safe to call from controllers
+     * after the filter has run; if the filter has not run (some test
+     * contexts) this still returns a stable value rather than null.
+     *
+     * <p>Used by audit-emitting endpoints so the {@code requestId} on the
+     * audit event matches the {@code requestId} on the response header
+     * and on every business log line in the request scope.</p>
+     */
+    public static String requestId(HttpServletRequest request) {
+        String rid = request.getHeader(HEADER_REQUEST_ID);
+        if (rid == null || rid.isBlank()) {
+            String mdc = MDC.get(MDC_REQUEST_ID);
+            if (mdc != null && !mdc.isBlank()) {
+                return mdc;
+            }
+            rid = UUID.randomUUID().toString();
+        }
+        return rid;
+    }
 }

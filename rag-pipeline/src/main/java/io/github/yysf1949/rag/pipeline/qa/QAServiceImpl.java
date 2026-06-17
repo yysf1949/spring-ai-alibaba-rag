@@ -17,6 +17,7 @@ import io.github.yysf1949.rag.core.port.AnswerCache;
 import io.github.yysf1949.rag.core.port.EmbeddingCache;
 import io.github.yysf1949.rag.core.port.EmbeddingGateway;
 import io.github.yysf1949.rag.core.port.HotQuestionProvider;
+import io.github.yysf1949.rag.core.port.LlmAuditHook;
 import io.github.yysf1949.rag.core.port.LlmService;
 import io.github.yysf1949.rag.core.port.QAService;
 import io.github.yysf1949.rag.core.port.RerankResult;
@@ -105,6 +106,7 @@ public class QAServiceImpl implements QAService {
     private final HotQuestionProvider hotQuestions;
     private final MeterRegistry meterRegistry;
     private final RateLimiter rateLimiter; // may be null in hermetic tests
+    private final LlmAuditHook llmAuditHook; // may be NOOP in tests
 
     /**
      * Stage timer names — spec §9.1 metric {@code rag.qa.latency.ms{stage}}.
@@ -125,7 +127,7 @@ public class QAServiceImpl implements QAService {
                          HotQuestionProvider hotQuestions) {
         this(rewriter, answerCache, embeddingCache, embeddingGateway,
                 vectorStore, reranker, contextAssembler, llm, hotQuestions,
-                new SimpleMeterRegistry(), null);
+                new SimpleMeterRegistry(), null, LlmAuditHook.NOOP);
     }
 
     public QAServiceImpl(RewriteService rewriter,
@@ -140,7 +142,7 @@ public class QAServiceImpl implements QAService {
                          MeterRegistry meterRegistry) {
         this(rewriter, answerCache, embeddingCache, embeddingGateway,
                 vectorStore, reranker, contextAssembler, llm, hotQuestions,
-                meterRegistry, null);
+                meterRegistry, null, LlmAuditHook.NOOP);
     }
 
     /**
@@ -162,6 +164,30 @@ public class QAServiceImpl implements QAService {
                          HotQuestionProvider hotQuestions,
                          MeterRegistry meterRegistry,
                          RateLimiterRegistry rateLimiterRegistry) {
+        this(rewriter, answerCache, embeddingCache, embeddingGateway,
+                vectorStore, reranker, contextAssembler, llm, hotQuestions,
+                meterRegistry, rateLimiterRegistry, LlmAuditHook.NOOP);
+    }
+
+    /**
+     * Master constructor — also wires the LLM audit hook (spec §21).
+     * The hook is the bridge from the Spring-free pipeline module to
+     * the Spring-managed {@code AuditChannel} in rag-app; in tests it
+     * falls back to {@link LlmAuditHook#NOOP} so the pipeline remains
+     * hermetic.
+     */
+    public QAServiceImpl(RewriteService rewriter,
+                         AnswerCache answerCache,
+                         EmbeddingCache embeddingCache,
+                         EmbeddingGateway embeddingGateway,
+                         VectorStore vectorStore,
+                         RerankService reranker,
+                         ContextAssembler contextAssembler,
+                         LlmService llm,
+                         HotQuestionProvider hotQuestions,
+                         MeterRegistry meterRegistry,
+                         RateLimiterRegistry rateLimiterRegistry,
+                         LlmAuditHook llmAuditHook) {
         this.rewriter = Objects.requireNonNull(rewriter, "rewriter");
         this.answerCache = Objects.requireNonNull(answerCache, "answerCache");
         this.embeddingCache = Objects.requireNonNull(embeddingCache, "embeddingCache");
@@ -174,6 +200,7 @@ public class QAServiceImpl implements QAService {
         this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
         this.rateLimiter = (rateLimiterRegistry == null) ? null
                 : rateLimiterRegistry.rateLimiter("qa");
+        this.llmAuditHook = (llmAuditHook == null) ? LlmAuditHook.NOOP : llmAuditHook;
     }
 
     @Override
@@ -399,10 +426,37 @@ public class QAServiceImpl implements QAService {
         PipelineMdc.put(PipelineMdc.KEY_STAGE, "generate");
         String finalText;
         AnswerSource source;
+        long llmLatencyMs = -1L;
         try {
+            long llmT0 = System.currentTimeMillis();
             finalText = llm.generateAnswer(query.tenantId(), assembled.fullPrompt());
+            llmLatencyMs = System.currentTimeMillis() - llmT0;
             source = AnswerSource.LLM;
+            // Audit — LLM_CALL SUCCESS. Records the (model, prompt, response)
+            // triple so an auditor can reconstruct exactly which model
+            // version produced which answer. The prompt body is truncated
+            // by the caller (we use the assemble stage output verbatim
+            // here because the assembler already capped it at the token
+            // budget; it cannot exceed ~16K tokens).
+            try {
+                llmAuditHook.onLlmCall(
+                        query.tenantId(),
+                        query.userId(),
+                        query.sessionId(),
+                        queryHash,
+                        llm.modelId(),
+                        "qa-default",
+                        assembled.fullPrompt(),
+                        finalText,
+                        llmLatencyMs,
+                        "SUCCESS");
+            } catch (RuntimeException auditEx) {
+                // The hook contract is "never throw" — but defensively
+                // absorb just in case a misbehaving adapter escapes.
+                log.warn("llmAuditHook.onLlmCall threw — ignored: {}", auditEx.toString());
+            }
         } catch (LlmUnavailableException lue) {
+            llmLatencyMs = System.currentTimeMillis() - generateStart;
             log.warn("QA LLM unavailable for tenant={} queryHash={} err={} — falling back to FALLBACK_RULE",
                     query.tenantId(), queryHash, lue.getMessage());
             Counter.builder("rag.qa.degradation.total")
@@ -412,7 +466,27 @@ public class QAServiceImpl implements QAService {
                     .increment();
             finalText = fallbackFromChunks(rewritten.rewritten(), reranked);
             source = AnswerSource.FALLBACK_RULE;
+            // Audit — LLM_CALL DEGRADED (the LLM was called and FAILED;
+            // the audit trail still needs the prompt body that triggered
+            // the failure, otherwise the failure is invisible to
+            // compliance review).
+            try {
+                llmAuditHook.onLlmCall(
+                        query.tenantId(),
+                        query.userId(),
+                        query.sessionId(),
+                        queryHash,
+                        llm.modelId(),
+                        "qa-default",
+                        assembled.fullPrompt(),
+                        lue.getMessage() == null ? "LlmUnavailableException" : lue.getMessage(),
+                        llmLatencyMs,
+                        "DEGRADED");
+            } catch (RuntimeException auditEx) {
+                log.warn("llmAuditHook.onLlmCall threw — ignored: {}", auditEx.toString());
+            }
         } catch (RuntimeException re) {
+            llmLatencyMs = System.currentTimeMillis() - generateStart;
             // Any unexpected runtime exception from the LLM is treated as
             // upstream failure — never let it bubble past QA and crash the
             // request thread.
@@ -425,6 +499,21 @@ public class QAServiceImpl implements QAService {
                     .increment();
             finalText = fallbackFromChunks(rewritten.rewritten(), reranked);
             source = AnswerSource.FALLBACK_RULE;
+            try {
+                llmAuditHook.onLlmCall(
+                        query.tenantId(),
+                        query.userId(),
+                        query.sessionId(),
+                        queryHash,
+                        llm.modelId(),
+                        "qa-default",
+                        assembled.fullPrompt(),
+                        re.getClass().getSimpleName() + ": " + re.getMessage(),
+                        llmLatencyMs,
+                        "DEGRADED");
+            } catch (RuntimeException auditEx) {
+                log.warn("llmAuditHook.onLlmCall threw — ignored: {}", auditEx.toString());
+            }
         } finally {
             stamps[6] = System.currentTimeMillis() - generateStart;
             stageTimers.get("generate").record(stamps[6], TimeUnit.MILLISECONDS);

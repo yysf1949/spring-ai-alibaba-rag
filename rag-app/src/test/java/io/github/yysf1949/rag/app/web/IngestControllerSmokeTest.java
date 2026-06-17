@@ -1,6 +1,7 @@
 package io.github.yysf1949.rag.app.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.yysf1949.rag.app.audit.AuditChannel;
 import io.github.yysf1949.rag.core.model.IngestJob;
 import io.github.yysf1949.rag.core.model.IngestJobStatus;
 import io.github.yysf1949.rag.core.port.IngestService;
@@ -54,6 +55,9 @@ class IngestControllerSmokeTest {
 
     @MockBean
     private IngestService ingestService;
+
+    @MockBean
+    private AuditChannel auditChannel; // avoid Spring wiring a real SLF4J logger; we don't assert audit in this test
 
     @Test
     void postIngestReturns202WithPendingJob() throws Exception {

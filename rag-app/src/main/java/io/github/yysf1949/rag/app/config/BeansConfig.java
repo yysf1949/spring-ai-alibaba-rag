@@ -1,9 +1,11 @@
 package io.github.yysf1949.rag.app.config;
 
+import io.github.yysf1949.rag.app.audit.AuditChannel;
 import io.github.yysf1949.rag.core.port.AnswerCache;
 import io.github.yysf1949.rag.core.port.EmbeddingCache;
 import io.github.yysf1949.rag.core.port.EmbeddingGateway;
 import io.github.yysf1949.rag.core.port.HotQuestionProvider;
+import io.github.yysf1949.rag.core.port.LlmAuditHook;
 import io.github.yysf1949.rag.core.port.LlmService;
 import io.github.yysf1949.rag.core.port.QAService;
 import io.github.yysf1949.rag.core.port.RerankService;
@@ -91,7 +93,10 @@ public class BeansConfig {
             ContextAssembler contextAssembler,
             @Autowired(required = false) LlmService llm,
             @Autowired(required = false) HotQuestionProvider hotQuestions,
-            io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+            io.micrometer.core.instrument.MeterRegistry meterRegistry,
+            @Autowired(required = false)
+                    io.github.resilience4j.ratelimiter.RateLimiterRegistry rateLimiterRegistry,
+            LlmAuditHook llmAuditHook) {
 
         // Fall back to no-op variants when the real impl is not on the
         // classpath. EmbeddingGateway / RerankService / LlmService are
@@ -105,11 +110,31 @@ public class BeansConfig {
         LlmService ll = llm != null ? llm : new io.github.yysf1949.rag.embedding.stub.StubLlmService();
         HotQuestionProvider hq = hotQuestions != null ? hotQuestions : new InMemoryHotQuestionProvider();
 
-        // spec §9.1: wire the 10-arg constructor so all rag.qa.* metrics
-        // are published to the Spring-managed MeterRegistry (which the
-        // actuator /actuator/prometheus endpoint exposes).
+        // spec §9.1: wire the 12-arg master constructor so all rag.qa.*
+        // metrics are published to the Spring-managed MeterRegistry AND
+        // the LLM audit hook bridges the pipeline to AuditChannel. The
+        // rate-limiter registry is optional — when the resilience4j
+        // module is on the classpath (production) it caps QPS; in
+        // hermetic unit-test contexts we leave it null and the pipeline
+        // runs unbounded.
         return new QAServiceImpl(rewriter, ans, ec, eg, vs, rr, contextAssembler, ll, hq,
-                meterRegistry);
+                meterRegistry, rateLimiterRegistry, llmAuditHook);
+    }
+
+    /**
+     * Default {@link LlmAuditHook} bean — bridges the Spring-free
+     * pipeline module to the Spring-managed {@link AuditChannel}. Lives
+     * in rag-app so the rag-pipeline tests don't have to know about
+     * SLF4J appenders or Spring.
+     *
+     * <p>The hook's contract is "never throw, never block" — the adapter
+     * below absorbs any AuditChannel runtime exception and tracks it on
+     * the {@code rag.audit.errors.total} gauge so a broken audit pipeline
+     * is visible without taking down the LLM call path.</p>
+     */
+    @Bean
+    public LlmAuditHook llmAuditHook(AuditChannel audit) {
+        return new LlmAuditHookAdapter(audit);
     }
 
     // ─── no-op fallbacks (assembly-layer degradation only) ──────────────

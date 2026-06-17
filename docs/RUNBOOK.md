@@ -216,6 +216,117 @@ for embedding. `tail -f` the redis container logs:
 docker compose logs -f redis
 ```
 
+### 6.7 TLS — production rollout (Redis + LLM)
+
+> **Why this section exists**: spec §2.2 mandates TLS 1.2+ for every
+> external connection (Redis, SiliconFlow, internal RPC). Local
+> docker-compose stays in plain TCP because TLS handshakes against a
+> self-signed CA add a lot of friction with no security benefit; this
+> section is the procedure to turn TLS on for staging / production.
+
+#### 6.7.1 SiliconFlow (LLM / embedding / rerank)
+
+Already on HTTPS by default — the `rag.siliconflow.base-url` placeholder
+in `application.yml` resolves to `https://api.siliconflow.cn/v1` unless
+overridden. No additional configuration is required to encrypt
+SiliconFlow traffic; the Spring WebClient that the
+`SiliconFlow*Gateway` beans wrap negotiates TLS by default.
+
+If your org runs an internal SiliconFlow-compatible proxy with a
+private cert, point `rag.siliconflow.base-url` at the proxy URL and add
+the proxy's CA to the JVM trust store (or to the
+`-Djavax.net.ssl.trustStore` system property) at startup.
+
+#### 6.7.2 Redis (Jedis)
+
+**Opt-in** — set `REDIS_TLS_ENABLED=true` and provide a private-CA
+trust store. The application fails fast at startup if the flag is on
+but the trust store is missing, so a misconfiguration is loud rather
+than silent.
+
+| Env var | Required? | Default | Notes |
+|---|---|---|---|
+| `REDIS_TLS_ENABLED` | yes (to enable) | `false` | Mirrors `spring.data.redis.ssl.enabled` |
+| `REDIS_TLS_TRUSTSTORE` | yes (when enabled) | empty | Absolute path to PKCS12 or JKS file |
+| `REDIS_TLS_TRUSTSTORE_PASSWORD` | yes (when enabled) | empty | The keystore password (passed via env, never in YAML) |
+| `REDIS_TLS_TRUSTSTORE_TYPE` | no | `PKCS12` | `PKCS12` or `JKS` |
+| `REDIS_TLS_VERIFY_HOSTNAME` | no | `true` | Set to `false` only for self-signed dev certs |
+
+**Generate a private-CA trust store (corp CA / Vault PKI)**:
+
+```bash
+# Option A — Vault PKI: fetch the issuing CA via the Vault CLI
+vault read -field=certificate pki_root/cert/ca_chain > /etc/redis-ca.crt
+
+# Option B — OpenSSL: build a self-signed CA for a dev cluster
+openssl req -x509 -nodes -newkey rsa:4096 \
+  -keyout /etc/redis-ca.key -out /etc/redis-ca.crt \
+  -subj "/CN=rag-redis-dev" -days 365
+
+# Convert the PEM into a PKCS12 trust store the JVM can load
+keytool -importcert -alias redis-ca \
+  -file /etc/redis-ca.crt \
+  -keystore /etc/redis-truststore.p12 \
+  -storetype PKCS12 -storepass "${REDIS_TLS_TRUSTSTORE_PASSWORD}"
+```
+
+Mount `/etc/redis-truststore.p12` into the rag-app pod (or copy it
+onto the VM) and export the env var pointing at it. **Never commit
+the trust store or its password to git** — the `.gitignore` already
+covers `*.p12` and `*.jks`, but verify on every clone.
+
+**Configure Redis Stack 7.4 for TLS**:
+
+The Redis Stack container needs TLS turned on too. A minimal
+`redis-tls.conf`:
+
+```conf
+tls-port 6380
+port 0
+tls-cert-file /etc/redis/tls/redis.crt
+tls-key-file  /etc/redis/tls/redis.key
+tls-ca-cert-dir /etc/redis/tls/ca
+tls-protocols "TLSv1.2 TLSv1.3"
+```
+
+Then point rag-app at the TLS port: `REDIS_PORT=6380`.
+
+**Verification**:
+
+After restarting rag-app with the env vars set, the startup log
+should contain:
+
+```
+INFO  i.g.y.rag.redis.config.RedisSslAutoConfiguration :
+      Configuring Jedis SSL trust store=/etc/redis-truststore.p12 type=PKCS12 verifyHostname=true
+INFO  i.g.y.r.redis.config.RedisConnection          :
+      Redis pool starting in TLS mode
+INFO  i.g.y.r.redis.config.RedisConnection          :
+      Redis pool ready — host=… port=6380 maxTotal=32 ping=PONG TLS=on
+```
+
+The `TLS=on` marker is the operator's smoke test — if it's missing
+while `REDIS_TLS_ENABLED=true` is set, the trust store loaded but
+Jedis didn't pick up the `SSLSocketFactory` (check that
+`RedisSslAutoConfiguration` is on the classpath via
+`mvn dependency:tree | grep rag-redis`).
+
+#### 6.7.3 Audit log TLS
+
+The audit file at `${AUDIT_FILE:-logs/audit.log}` is written in cleartext
+by default. If your compliance regime requires the audit trail to be
+encrypted at rest, mount the volume on an encrypted filesystem
+(LUKS / EBS / Cloud KMS) and rely on the OS-level encryption —
+adding application-level encryption to the audit file would block
+`grep` and `jq` access for compliance reviewers.
+
+The audit channel itself (`io.github.yysf1949.rag.app.audit.AuditChannel`,
+SLF4J logger name `audit`) is the integration point for shipping
+events to a remote Kafka topic or HTTPS endpoint — the
+`logback-spring.xml` appender chain is the place to wire that up in
+production. The default file appender covers the local-disk retention
+requirement (spec §2.4 — 6 months).
+
 ---
 
 ## 7. What to read next
