@@ -176,7 +176,19 @@
                             </includes>
                             <systemPropertyVariables>
                                 <eval.output.dir>${project.basedir}/../docs/eval</eval.output.dir>
+                                <!-- `environmentVariables` (not systemPropertyVariables)
+                                     is what Spring's Environment reads when resolving the
+                                     yml placeholders ${SILICONFLOW_API_KEY} and
+                                     ${RAG_SILICONFLOW_ENABLED}. The env var signal is the
+                                     canonical one — without it, Spring's
+                                     @ConfigurationProperties binding never sees the key
+                                     and SiliconFlowAutoConfiguration.isActive() returns
+                                     false, falling back to stub adapters. -->
                             </systemPropertyVariables>
+                            <environmentVariables>
+                                <SILICONFLOW_API_KEY>${env.SILICONFLOW_API_KEY}</SILICONFLOW_API_KEY>
+                                <RAG_SILICONFLOW_ENABLED>true</RAG_SILICONFLOW_ENABLED>
+                            </environmentVariables>
                         </configuration>
                     </plugin>
                 </plugins>

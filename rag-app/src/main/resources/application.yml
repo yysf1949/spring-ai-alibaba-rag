@@ -108,6 +108,13 @@ resilience4j:
 # (see rag-embedding/.env.example) — never commit a real key to YAML.
 rag:
   siliconflow:
+    # Bridge: env var SILICONFLOW_API_KEY is the canonical signal.
+    # The Surefire `eval` profile (pom.xml) injects it into the forked
+    # test JVM via environmentVariables (in addition to systemPropertyVariables),
+    # so this single placeholder handles both:
+    #   - local dev: `export SILICONFLOW_API_KEY=sk-...` then `mvn ... -Peval`
+    #   - CI: env var set on the build agent
+    #   - standalone app: yml substitution reads from same env var
     enabled: ${RAG_SILICONFLOW_ENABLED:false}
     api-key: ${SILICONFLOW_API_KEY:}
     base-url: ${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}

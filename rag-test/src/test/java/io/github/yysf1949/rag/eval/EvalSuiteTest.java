@@ -70,6 +70,14 @@ class EvalSuiteTest {
                 () -> System.getenv().getOrDefault("RAG_REDIS_HOST", "localhost"));
         r.add("spring.rag.redis.port",
                 () -> Integer.parseInt(System.getenv().getOrDefault("RAG_REDIS_PORT", "6379")));
+        // Bridge SiliconFlow env vars to Spring properties — required because
+        // the forked Surefire JVM sees the env var (via environmentVariables)
+        // but yml placeholders resolve against the Spring Environment, not the
+        // raw OS env. Without this, SiliconFlowProperties.isActive() returns
+        // false even though the env var is set.
+        String sfKey = System.getenv("SILICONFLOW_API_KEY");
+        r.add("rag.siliconflow.enabled", () -> "true");
+        r.add("rag.siliconflow.api-key", () -> sfKey == null ? "" : sfKey);
     }
 
     @Test

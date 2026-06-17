@@ -2,8 +2,8 @@
   "name" : "exchange-policy",
   "recallAtK" : 1.0,
   "citationCoverage" : 1.0,
-  "groundRate" : 0.0,
-  "pass" : false
+  "groundRate" : 1.0,
+  "pass" : true
 }, {
   "name" : "group-buy-return",
   "recallAtK" : 1.0,
@@ -56,6 +56,6 @@
   "name" : "special-goods",
   "recallAtK" : 1.0,
   "citationCoverage" : 1.0,
-  "groundRate" : 0.0,
-  "pass" : false
+  "groundRate" : 1.0,
+  "pass" : true
 } ]
