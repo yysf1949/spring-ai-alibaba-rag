@@ -1305,6 +1305,128 @@ which resolves to the project root's `docs/eval/` directory.
 
 ---
 
+## 14. Phase 7 lessons — Cluster 6C (Resilience4j: circuit breakers + rate limiter)
+
+### 14.1 Function-style API beats AOP annotation when call sites aren't Spring proxies
+
+Both `SiliconFlowEmbeddingGateway` and `RedisVectorStore` construct their collaborators with
+plain `new` calls (`@Bean` methods in `SiliconFlowAutoConfiguration` / `RedisAutoConfiguration`),
+not via `@Component`. That makes `@CircuitBreaker` / `@Retry` annotations on the class
+**invisible to the Resilience4j AOP weaver** — the proxy is only applied to beans created by
+Spring's component scan, not to `new`-ed instances returned from `@Bean` methods.
+
+Two fixes are possible:
+1. Add `@Component` (or `@Service`) to the adapter classes and let Spring proxy them.
+2. Use the function-style API: `CircuitBreaker.decorateSupplier(breaker, () -> ...).get()`.
+
+We picked (2) for two reasons — minimal blast radius (no constructor signature changes for
+existing call sites, no risk of double-proxying when something else wires the adapter), and
+explicit visibility at the call site ("yes, this call is breaker-guarded"). The trade-off is
+that every protected call needs a `try { guarded.get() } catch (CallNotPermittedException ex)`
+block to translate the breaker's signal into our typed exception — but that block is local
+and easy to read.
+
+### 14.2 Don't stack Resilience4j @Retry on top of WebClient retryWhen
+
+The `SiliconFlowEmbeddingGateway` already had `Retry.backoff(maxRetries, ...)` inside the
+`WebClient` chain (added in Phase 5-P4). Stacking a Resilience4j `@Retry` on top would
+have produced **double-retry during outages** — the inner `retryWhen` would re-attempt the
+upstream call, fail again, the outer `@Retry` would also re-attempt the whole block, fail
+again, and we'd have made `retries²` calls instead of `retries`. The breaker still helps
+because it counts failures across the entire protected call, but the explicit Resilience4j
+`@Retry` would have been redundant. Lesson: when adding resilience patterns, first audit
+what the underlying client library already does.
+
+### 14.3 Inner `catch (Exception e)` re-wraps the breaker signal
+
+First attempt at wiring the Redis breaker ended up swallowing the breaker's "circuit
+breaker OPEN" message under a generic "search failed for tenant=..." wrapper:
+
+```java
+try {
+    result = guarded.get();              // CallNotPermittedException here
+} catch (CallNotPermittedException ex) {
+    throw new VectorStoreUnavailableException(
+        "Redis circuit breaker OPEN — ...", ex);
+}                                        // ← outer catch (Exception e) below catches
+                                         //   the new VectorStoreUnavailableException and
+                                         //   re-wraps it with "search failed for ..."
+```
+
+Java's catch ordering matches on static type, not on the original exception, so a
+`VectorStoreUnavailableException` thrown from the inner catch block **is** caught by the
+outer `catch (Exception e)` and re-wrapped. The fix is a typed re-throw BEFORE the generic
+catch:
+
+```java
+} catch (VectorStoreUnavailableException ex) {
+    throw ex;                           // preserve breaker message verbatim
+} catch (Exception e) {
+    throw new VectorStoreUnavailableException("search failed for ...", e);
+}
+```
+
+Discovered while writing the `RedisVectorStoreCircuitBreakerTest` — the test failed
+because the assertion `"should mention 'circuit breaker OPEN'"` got `"search failed for..."`.
+Unit-testing the failure path exposed the bug; testing only the happy path would have shipped
+it.
+
+### 14.4 E2E that uses `@MockBean RedisConnection` + `@BeforeEach` stubbing
+
+The natural first attempt was `@DynamicPropertySource` pointing at a dead Redis host. It
+failed with `RedisUnavailableException: Failed to ping Redis at 127.0.0.1:1` — the
+`@PostConstruct` ping in `RedisConnection.init()` runs before any breaker wiring, so the
+context fails to load and the test never gets a chance to run.
+
+The pattern that works:
+- `@MockBean RedisConnection redisConnection` — replaces the bean's `@PostConstruct` ping
+  with a no-op (Mockito's default).
+- `@BeforeEach` — stub `redisConnection.client()` to return a `JedisPooled` mock whose
+  `ftSearch(...)` throws `JedisException`.
+
+That boots the full Spring context, the wiring is exercised end-to-end (auto-config →
+`@Bean` factory → constructor injection → Resilience4j starter picks up `application.yml`
+→ `CircuitBreakerRegistry` is wired → `RedisVectorStore` looks up the `redis` breaker on
+construction). The test fails fast (no Docker, no live Redis) and proves the breaker does
+trip under sustained failures.
+
+### 14.5 `mvn -pl rag-app test` won't pick up the fix until `rag-redis` is installed
+
+The first run of `Resilience4jEndToEndIT` failed with `search failed for tenant=...` even
+though the source code clearly had the breaker fix. Root cause: `rag-app` depends on
+`rag-redis` as a multi-module dependency, and `mvn -pl rag-app test` reuses the
+**already-installed jar in `~/.m2`** for the upstream modules (no `--also-make`).
+
+The fix is `mvn -pl rag-redis -am install -DskipTests` first, then `mvn -pl rag-app test`.
+Or run `mvn install` at the root. Either way the lesson: **after editing an upstream
+module, re-install before running a downstream test**. The full `mvn verify` from the root
+already does this automatically — it's only the selective `-pl` runs that surprise you.
+
+### 14.6 `recordExceptions` is matched on the thrown type, not the cause
+
+Resilience4j's `recordExceptions` config is checked against the exception that the
+**guarded call** throws, not against any nested cause. So when `RedisVectorStore.search`
+catches `JedisException` and re-throws `VectorStoreUnavailableException`, only
+`VectorStoreUnavailableException` (not `JedisException`) needs to be in
+`recordExceptions`. If you forget and only list `JedisException`, the breaker will
+under-count failures during outages — it sees a "non-recorded" exception, treats it as
+a success, and never trips.
+
+### 14.7 Rate limiter placement matters: gate the entry point, not the deep callee
+
+We considered three places for the Q&A rate limiter:
+1. `RagController.qa(...)` — but that ties the rate limit to the HTTP transport.
+2. `RedisVectorStore.search(...)` — but per-call limits there double-count (one QA
+   request fans out to several searches if the rewrite path includes multi-query).
+3. `QAServiceImpl.answer(...)` — one entry per user-facing request, regardless of how
+   many downstream calls happen. ✅
+
+Rate-limit at the **logical entry point of the operation**, not at the technical
+chokepoint. The latter either under-limits (misses cached / fast paths) or over-limits
+(starves the operator of legitimate fan-out).
+
+---
+
 ## Appendix: Eval toolchain quick reference
 
 | Command | Purpose |
