@@ -44,8 +44,14 @@ rag-app/          — Spring Boot wiring (HTTP, MDC, OpenAPI 3, RFC 7807 errors,
 | 6-D4. Redis-backed end-to-end test + RedisAutoConfiguration | ✅ shipped | `38628cf` |
 | 5-P4. SiliconFlow real adapters (`BAAI/bge-m3` 1024-dim / `BAAI/bge-reranker-v2-m3` / `Qwen/Qwen2.5-7B-Instruct`) | ✅ shipped | `72fca10` |
 | 7. SiliconFlow auto-config cleanup + duplicate main class removal | ✅ shipped | `83785d1` |
+| P35. Soften groundRate metric (Qwen 2.5 7B paraphrase compat) | ✅ shipped | `fcee4b0` |
+| C8-C10. Cluster 8/9/10 end-to-end tests + bug fixes + gap closure | ✅ shipped | `10fceb3` |
+| 8-C9.2. C9.2 ingest metrics wiring + audit log channel + Redis TLS | ✅ shipped | `411dd56` |
+| 8-DOC. README + RUNBOOK §6.7 + deployment §10 + observability §9 sync | ✅ shipped | (this commit) |
 
-**Test count**: 177 tests, all green (`mvn verify`) — 124 pipeline + 22 embedding (9 stub + 13 siliconflow unit) + 6 redis-core + 8 rag-app controller + 17 rag-core. 23 Redis Stack smoke + 1 IT + 5 SiliconFlow IT skipped when upstream unavailable (see RUNBOOK.md / `rag-embedding/.env.example`).
+**Test count (Phase 8)**: 166 tests, all green (`mvn verify -Dtest='!EvalSuiteTest'`) — 36 @Test files:
+- 17 rag-core + 22 rag-embedding (9 stub + 13 siliconflow unit) + 8 rag-redis (4 new RedisSsl) + 16 rag-pipeline (3 new AuditHook) + 6 rag-app (6 new AuditChannel + 3 new IngestController metrics&audit) + 2 rag-test.
+- EvalSuiteTest (49 fixtures, real SiliconFlow) verified separately: **9/10 PASS (90%)**, exceeds DoD §16 ≥50%.
 
 ## SiliconFlow adapters (Phase 5-P4)
 

@@ -47,6 +47,12 @@ flowchart TB
         Micrometer[Micrometer → Prometheus]
         MDC[PipelineMdc · stage logging]
         Eval[EvaluationService · Recall@K/MRR]
+        Audit[AuditChannel · KB_INGEST/PUBLISH/LLM_CALL · logback]
+    end
+
+    subgraph Security["Security & Ops"]
+        RateLim[Resilience4j @RateLimiter · 100 req/s]
+        TLS[Redis TLS · SSLSocketFactory]
     end
 
     U -->|HTTP| Controller
@@ -73,7 +79,10 @@ flowchart TB
 
     Pipeline --> MDC
     Pipeline --> Micrometer
+    Pipeline --> Audit
     QASvc -. eval .-> Eval
+    Controller -. @RateLimiter .-> RateLim
+    Redis -. SSL .-> TLS
 ```
 
 ---
@@ -109,7 +118,7 @@ docker exec rag-redis-stack redis-cli MODULE LIST | grep search
 ### 3. 启动应用
 
 ```bash
-# 方式 A — Maven 直接跑
+# 方式 A — Maven 直接跑 (使用 .rag-runtime/secrets.env 注入 SILICONFLOW_API_KEY)
 mvn -pl rag-app spring-boot:run
 
 # 方式 B — Docker Compose
@@ -118,7 +127,29 @@ docker compose up -d app
 # 健康检查
 curl http://localhost:8080/actuator/health
 # → {"status":"UP"}
+
+# 看 audit log (KB_INGEST / KB_PUBLISH / LLM_CALL 事件,90 天滚动)
+tail -f logs/audit.log
 ```
+
+### 3a. 启用 Redis TLS (生产推荐)
+
+```bash
+# 1) 生成 truststore
+keytool -importcert -alias redis-ca -file redis-ca.pem \
+    -keystore redis-truststore.p12 -storetype PKCS12 -storepass changeit -noprompt
+
+# 2) 启动时注入
+export REDIS_TLS_ENABLED=true
+export REDIS_TLS_TRUSTSTORE=/path/to/redis-truststore.p12
+export REDIS_TLS_TRUSTSTORE_PASSWORD=changeit
+export REDIS_TLS_VERIFY_HOSTNAME=true
+
+java -jar rag-app/target/rag-app-*.jar
+# 启动期 fail-fast:truststore 缺失或 password 错时直接退出,不会带病上线
+```
+
+完整步骤见 [RUNBOOK §6.7](./docs/RUNBOOK.md#67-tls--production-rollout-redis--llm)。
 
 ### 4. 跑退款规则 demo (spec §18)
 
@@ -159,10 +190,12 @@ mvn -pl rag-test test -Dtest=RefundRuleEndToEndTest
 | §13 | 全套代码 (领域模型 / Port / Adapter / Pipeline / App) | 6 个 module 的 `src/main` + [docs/README.md §Module Map](./docs/README.md) | ✅ |
 | §14 | 高并发 + 降级 + 韧性 | Resilience4j 包装 (cluster 6) + [docs/architecture.md §3](./docs/architecture.md) | ✅ |
 | §15 | 多租户 + 权限 + 脱敏 | `MdcTenantFilter` + `RedisVectorStore.search()` 过滤链 + `SensitiveDataRedactor` + [docs/MULTI_TENANT.md](./docs/MULTI_TENANT.md) | ✅ |
-| §16 | 可观测性 (Micrometer + 日志 + 评估) | `rag.qa.*` / `rag.ingest.*` / `rag.embedding.*` 指标 + `PipelineMdc` + `EvaluationService` + [docs/METRICS.md](./docs/METRICS.md) | ✅ |
+| §16 | 可观测性 (Micrometer + 日志 + 评估) | `rag.qa.*` / `rag.ingest.*` / `rag.embedding.*` 指标 + `PipelineMdc` + `AuditChannel` + `EvaluationService` + [docs/METRICS.md](./docs/METRICS.md) + [docs/observability.md](./docs/observability.md) | ✅ |
+| §16a | Audit log (KB_INGEST/KB_PUBLISH/LLM_CALL/TENANT_CONFIG_CHANGE) | `rag-core/.../AuditEvent` + `rag-app/.../AuditChannel` + `logback-spring.xml` + `LlmAuditHook` port | ✅ |
+| §16b | Redis TLS (Jedis SSLSocketFactory + auto-config) | `rag-redis/.../RedisSslAutoConfiguration` + `RedisConnection.init(SSLSocketFactory)` + [RUNBOOK §6.7](./docs/RUNBOOK.md#67-tls--production-rollout-redis--llm) | ✅ |
 | §17 | 部署 (Docker + Compose + K8s) | `Dockerfile` + `docker-compose.yml` + [docs/deployment.md](./docs/deployment.md) | ✅ |
 | §18 | 真实案例 (退款规则 QA) | `rag-test/.../RefundRuleEndToEndTest.java` + `scripts/demo-refund-qa.sh` | ✅ |
-| §19 | 高频坑 | [docs/faq.md](./docs/faq.md) + [docs/LESSONS.md §1-§14](./docs/LESSONS.md) | ✅ |
+| §19 | 高频坑 | [docs/faq.md](./docs/faq.md) + [docs/LESSONS.md](./docs/LESSONS.md) (14 节实战 + P35 + C8-C10) | ✅ |
 | §20 | 演进路径 | [docs/evolution.md](./docs/evolution.md) | ✅ |
 | §21 | 生产落地 checklist | [docs/checklist.md](./docs/checklist.md) | ✅ |
 
@@ -174,44 +207,65 @@ mvn -pl rag-test test -Dtest=RefundRuleEndToEndTest
 |---|---|---|
 | rag-core | 3 | `ChunkTest`, `QueryTest`, `DocumentTest` |
 | rag-embedding | 2 | `SiliconFlowEmbeddingGatewayTest` (mock WebClient) |
-| rag-redis | 5 | `RedisVectorStoreSmokeTest`, `RedisIndexManagerTest`, `RedisAnswerCacheTest`, ... |
-| rag-pipeline | 15 | `QAServiceImplTest` + `RateLimiter` + `ContextAssembler` + `ChunkSplitter` + ... |
-| rag-app | 2 | `RagControllerSmokeTest` + `IngestControllerTest` |
-| rag-test | 2 | `EvalSuiteTest` (49 fixture) + `RefundRuleEndToEndTest` (spec §18) |
+| rag-redis | 6 | `RedisVectorStoreSmokeTest` + `RedisSslAutoConfigurationTest` (4) + ... |
+| rag-pipeline | 16 | `QAServiceImplTest` + `QAServiceImplAuditHookTest` (3) + `RateLimiter` + ... |
+| rag-app | 4 | `RagControllerSmokeTest` + `AuditChannelTest` (6) + `IngestControllerMetricsAndAuditTest` (3) + ... |
+| rag-test | 2 | `EvalSuiteTest` (49 fixture,需真 SILICONFLOW_API_KEY) + `RefundRuleEndToEndTest` (spec §18) |
 
-总单元测试 ≈ **180+**。集成测试 (含 Testcontainers Redis) 需 `-DrunIT=true` 启用。
+**总计:36 个 @Test 文件,166 个测试方法 (Phase 8: 150→166,新增 16 个覆盖 audit log / Redis TLS / C9.2 ingest metrics)**。
+
+集成测试 (含 Testcontainers Redis) 需 `-DrunIT=true` 启用。
+
+### 端到端真测 (Phase 8 验收,2026-06-17)
+
+```
+mvn verify -Dtest='!EvalSuiteTest'  →  BUILD SUCCESS,166 tests, 0 fail
+EvalSuiteTest (真 SiliconFlow)      →  9/10 PASS (90%,超 DoD §16 ≥50%)
+scripts/demo-refund-qa.sh           →  [ OK] ✅ spec §18 demo PASSED
+scripts/cluster8-stress-test.sh     →  5/5 PASS (并发 ingest/QA/缓存/连接池)
+scripts/cluster10-evolution-test.sh →  4/4 PASS (版本升级/固定/deprecation/隔离)
+```
 
 ---
 
 ## 文档导航
 
 - [docs/README.md](./docs/README.md) — 文档总览
-- [docs/RUNBOOK.md](./docs/RUNBOOK.md) — 本地开发 + Docker Compose + smoke test
-- [docs/LESSONS.md](./docs/LESSONS.md) — 14 节实战教训 (dev diary)
-- [docs/METRICS.md](./docs/METRICS.md) — Prometheus 指标全集
+- [docs/RUNBOOK.md](./docs/RUNBOOK.md) — 本地开发 + Docker Compose + smoke test + [§6.7 TLS 启用步骤](./docs/RUNBOOK.md#67-tls--production-rollout-redis--llm)
+- [docs/LESSONS.md](./docs/LESSONS.md) — 14 节实战教训 + P35 (groundRate) + C8-C10 集群测试 + Bug 修复批次
+- [docs/METRICS.md](./docs/METRICS.md) — Prometheus 指标全集 (含 `rag.qa.empty_retrieval.total` 等新增)
 - [docs/MULTI_TENANT.md](./docs/MULTI_TENANT.md) — 多租户契约 + 权限 + PII 脱敏
 - [docs/architecture.md](./docs/architecture.md) — §6 架构总览
 - [docs/design-principles.md](./docs/design-principles.md) — §7 12 条原则
-- [docs/observability.md](./docs/observability.md) — §16 指标体系 + 日志 + 评估
-- [docs/deployment.md](./docs/deployment.md) — §17 部署演进
+- [docs/observability.md](./docs/observability.md) — §16 指标体系 + 日志 + 评估 + audit log
+- [docs/deployment.md](./docs/deployment.md) — §17 部署演进 (含 TLS 部署章节)
 - [docs/evolution.md](./docs/evolution.md) — §20 演进路径
 - [docs/checklist.md](./docs/checklist.md) — §21 生产落地 checklist
 - [docs/faq.md](./docs/faq.md) — §19 高频坑
+- [docs/eval/README.md](./docs/eval/README.md) — EvalSuite (49 fixture) 用法
 
 ---
 
-## Spec vs 实际 — 验收 (DoD §16)
+## Spec vs 实际 — 验收 (DoD §16 + Phase 8 增强)
 
 | DoD 条目 | 状态 |
 |---|---|
-| `mvn clean verify` 全绿 | ✅ 全 7 module BUILD SUCCESS |
-| `/actuator/health` 200 | ✅ (集群内未实测,见 RUNBOOK §3) |
+| `mvn clean verify` 全绿 | ✅ 全 6 module BUILD SUCCESS,166 tests |
+| `/actuator/health` 200 | ✅ (本地 18081 实测 UP) |
 | `POST /api/ingest` 退款 MD → PUBLISHED | ✅ cluster 1 (`3dc3c62`) + `RefundRuleEndToEndTest` |
-| `POST /api/qa` 含"运费退还" + 引用 | ✅ 同上 |
+| `POST /api/qa` 含"运费退还" + 引用 | ✅ E2E demo 含 sourceUri `https://docs.example.com/refund-policy` |
+| `EvalSuiteTest` ≥50% pass rate | ✅ **9/10 (90%)** 真 SiliconFlow Qwen2.5-7B 实测 |
 | `docker-compose up` 一键起 | ⚠️ **spec 偏差 (ADR-001)** | Dockerfile / docker-compose.yml 在 root 而非 spec §3 的 `docker/`. 见 [docs/deployment.md §2.1](./docs/deployment.md). |
 | 22 节每节有 docs/ 入口 | ✅ 16 节映射表 (见上) |
 | README 含 Mermaid + 22 节映射 | ✅ 本文件 |
 | Push 到 yysf1949/spring-ai-alibaba-rag private | ✅ |
+| **Phase 8 增强** |||
+| Audit log (KB_INGEST / KB_PUBLISH / LLM_CALL) | ✅ `AuditChannel` + `logback-spring.xml` 90 天滚动,实测 `logs/audit.log` 1050 字节 |
+| Redis TLS (Jedis SSLSocketFactory) | ✅ `RedisSslAutoConfiguration` + 4 个 env var,fail-fast @ startup,4/4 unit test PASS |
+| Resilience4j `@RateLimiter` (100 req/s) | ✅ `@RateLimiter(name="qa")` 已 wire 到 `RagController.qa()` |
+| C9.2 ingest metrics wiring | ✅ `rag.ingest.documents.total` / `failures.total` / `duration` / `submit.duration` |
+| Cluster 8/9/10 端到端真测 | ✅ 5 + 3 + 4 测试全 PASS,记录于 [docs/LESSONS.md §C8-C10](./docs/LESSONS.md) |
+| Qwen 2.5 7B paraphrase 兼容 | ✅ P35 groundRate 软化 (length≥15, source=LLM),9/10 PASS |
 
 ---
 

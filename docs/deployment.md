@@ -502,4 +502,96 @@ kubectl rollout history deployment/rag-app
 - [docs/checklist.md](./checklist.md) — 生产落地 checklist
 - [docs/evolution.md](./evolution.md) — 后续演进路径
 - K8s 官方: https://kubernetes.io/docs/concepts/
+
+---
+
+## 10. TLS 部署 (Phase 8 落地)
+
+生产环境必须启用传输层加密。本节覆盖 Redis (Jedis) + LLM (SiliconFlow) + Audit log 三段链路的 TLS 配置。
+
+### 10.1 Redis TLS (Jedis SSLSocketFactory)
+
+通过 `rag.redis.ssl.enabled=true` 触发 `RedisSslAutoConfiguration` 自动装配 `SSLSocketFactory`,传给 `RedisConnection.init(SSLSocketFactory)` 创建 SSL socket。Fail-fast 行为:truststore 缺失或 password 错时启动期直接退出,不会带病上线。
+
+**生成 truststore** (一次性):
+
+```bash
+# 1. 拿到 Redis CA 证书 (PEM)
+scp ops@redis-prod:/etc/redis/tls/ca.crt .
+
+# 2. 导入 Java truststore (PKCS12)
+keytool -importcert -alias redis-ca -file ca.crt \
+    -keystore redis-truststore.p12 -storetype PKCS12 \
+    -storepass "$REDIS_TLS_TRUSTSTORE_PASSWORD" -noprompt
+```
+
+**K8s Secret 注入** (推荐):
+
+```yaml
+# redis-truststore-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rag-redis-tls
+type: Opaque
+stringData:
+  truststore.p12: <base64-encoded file>
+  truststore-password: "changeit"
+---
+# 在 Deployment 挂载为文件
+spec:
+  containers:
+  - name: rag-app
+    volumeMounts:
+    - name: redis-tls
+      mountPath: /etc/rag/redis-tls
+      readOnly: true
+    env:
+    - name: REDIS_TLS_ENABLED
+      value: "true"
+    - name: REDIS_TLS_TRUSTSTORE
+      value: /etc/rag/redis-tls/truststore.p12
+    - name: REDIS_TLS_TRUSTSTORE_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: rag-redis-tls
+          key: truststore-password
+    - name: REDIS_TLS_VERIFY_HOSTNAME
+      value: "true"
+```
+
+### 10.2 LLM TLS (SiliconFlow)
+
+SiliconFlow 端点 `api.siliconflow.cn` 走 HTTPS,无需额外配置,但需确保:
+
+- `SILICONFLOW_API_KEY` 通过 K8s Secret 注入,严禁进 ConfigMap
+- 生产环境建议配置 `rag.siliconflow.timeout-ms=30000` + Resilience4j 熔断
+- 网关侧建议加 IP allowlist (SiliconFlow 出口 IP 段白名单)
+
+### 10.3 Audit log TLS (Kafka/HTTPS 远端)
+
+`AuditChannel` 默认写本地 `logs/audit.log` (RollingFileAppender, 90 天滚动)。生产如需远端集中收集,扩展 `AuditChannel.emit()` 推到 Kafka/HTTPS:
+
+```java
+// 在 AuditChannel 中加 HTTPS 推送 (K8s Service Account Token 认证)
+auditChannel.on("audit.event", event -> {
+    httpsClient.post(System.getenv("AUDIT_HTTPS_URL"))
+        .header("Authorization", "Bearer " + saToken)
+        .body(event)
+        .send();
+});
+```
+
+TLS 验证: `curl -v https://audit.example.com/health` 应返回 200 + 有效证书链。
+
+### 10.4 验收 checklist
+
+- [ ] Redis truststore 已生成并轮换 (建议 90 天)
+- [ ] K8s Secret `rag-redis-tls` 已创建
+- [ ] Deployment env var 4 个 (`REDIS_TLS_ENABLED` / `TRUSTSTORE` / `PASSWORD` / `VERIFY_HOSTNAME`) 已注入
+- [ ] `curl -k https://redis:6379/` 拒绝 (Redis 走 redis:// + TLS,非 HTTPS)
+- [ ] 应用启动日志无 "SSL handshake failed"
+- [ ] `/actuator/health` 仍返回 UP
+- [ ] `redis-cli --tls -h ... -p 6379 PING` 返回 PONG
+- [ ] audit log 写入 `logs/audit.log`,`tail -f` 能看到 KB_INGEST 事件
 - Spring Boot K8s: https://spring.io/guides/gs/spring-boot-kubernetes/

@@ -277,3 +277,63 @@ groups:
 [docs/METRICS.md](./METRICS.md) 是 **指标清单 (what)**,本文是 **接入 + 告警 (how)**。两份互补。
 
 [docs/LESSONS.md §13](./LESSONS.md) — 实战中 MDC 接入的 7 个教训。
+
+---
+
+## 9. Audit Log (Phase 8 落地)
+
+合规要求所有 KB 摄入、发布、LLM 调用、租户配置变更**留痕**。`AuditChannel` 通过 SLF4J + logback RollingFileAppender 输出 JSON 行,90 天滚动,never-throw 错误处理。
+
+### 9.1 事件类型
+
+| 事件 | 触发点 | 关键字段 |
+|---|---|---|
+| `KB_INGEST` | `POST /api/ingest` | `tenantId, kbId, documentId, documentVersion, sectionCount, permissionTags, latencyMs, outcome` |
+| `KB_PUBLISH` | `POST /api/ingest/publish/{jobId}` | `tenantId, kbId, documentId, documentVersion, chunkCount, latencyMs, outcome` |
+| `INGEST_FAIL` | ingest 异常分支 | `tenantId, kbId, errorClass, errorMessage, stage` |
+| `LLM_CALL` | `QAServiceImpl` LLM 调用 (含降级) | `tenantId, queryHash, modelId, answerLength, latencyMs, outcome (SUCCESS/DEGRADED/FAIL)` |
+| `TENANT_CONFIG_CHANGE` | (Phase 9+ 待实现) | `tenantId, changeType, beforeHash, afterHash` |
+
+### 9.2 输出格式
+
+logback-spring.xml 中 `AUDIT` appender 配置 `RollingFileAppender` → `logs/audit.log`,大小触发 (100MB) + 时间触发 (90 天) 双滚动策略。JSON 行格式:
+
+```json
+{"ts":"2026-06-17T21:30:50.123+08:00","type":"KB_INGEST","tenantId":"tenant-refund","resourceId":"96c1e025-...","actor":"anonymous","requestId":"b31fc1d1-...","fields":{"sectionCount":3,"permissionTags":"[ROLE_USER]","documentId":"kb-refund/doc-refund-v1","documentVersion":1,"latencyMs":48,"outcome":"SUCCESS"}}
+{"ts":"2026-06-17T21:30:50.567+08:00","type":"KB_PUBLISH","tenantId":"tenant-refund","resourceId":"96c1e025-...","actor":"anonymous","requestId":"18a8a4d8-...","fields":{"chunkCount":4,"documentId":"kb-refund/doc-refund-v1","documentVersion":1,"latencyMs":57,"outcome":"SUCCESS"}}
+```
+
+### 9.3 实现要点
+
+- **Port pattern** — `LlmAuditHook` 接口在 `rag-core` (无 Spring),`LlmAuditHookAdapter` 在 `rag-app` 把 hook 调用转成 `AuditChannel.emit()`,实现 pipeline 层的零 Spring 依赖
+- **Never-throw** — `AuditChannel` 捕获所有异常并降级到 `WARN` 日志,记录 `rag.audit.failures.total` 计数器,**绝不影响业务请求流**
+- **MDC 关联** — `tenantId` / `requestId` / `jobId` 自动从 MDC 提取,无需手工传入
+- **敏感字段脱敏** — `permissionTags` 之类不含 PII;如未来加 PII 字段,需过 `SensitiveDataRedactor`
+
+### 9.4 查询示例
+
+```bash
+# 某租户最近 10 条 ingest 事件
+grep '"tenantId":"tenant-refund".*"type":"KB_INGEST"' logs/audit.log | tail -10
+
+# 某 job 完整生命周期
+grep '"resourceId":"96c1e025-..."' logs/audit.log
+
+# 失败事件告警
+grep '"outcome":"FAIL"' logs/audit.log | tail -20
+
+# 解析为 JSON 数组 (jq)
+cat logs/audit.log | jq -c 'select(.tenantId=="tenant-refund")' | tail -20
+```
+
+### 9.5 与 [docs/METRICS.md](./METRICS.md) 的区别
+
+| | Audit log | Metrics |
+|---|---|---|
+| 目的 | 合规留痕 / 事后追溯 / 事件链 | 实时监控 / 趋势 / 告警 |
+| 格式 | JSON 行 (结构化) | 时间序列数字 |
+| 保留 | 90 天 (合规) | 13 个月 (Prometheus 默认) |
+| 查询 | grep / jq / ELK | PromQL / Grafana |
+| 触发 | 每个事件都写 | 聚合 (counter/timer) |
+
+两个系统**互补不互斥**。同一 LLM 调用既写 `rag.llm.calls.total{outcome}` 计数器,也写一条 `LLM_CALL` 事件。
