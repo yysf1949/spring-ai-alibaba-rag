@@ -1601,3 +1601,81 @@ T3.2 HashEmbedding fallback ✅ | T3.3 cosine 一致性 ⚠️半 PASS | T3.4 ch
 - **不在 HTTP 接口暴露 channel** → T3.5 只能通过 Chunk 模型 + retrieve response 验证（已经 FAIL）
 - **无 API key** → T3.1 测不了真 SiliconFlow HTTP；只能通过看 SiliconFlowAutoConfiguration 加载与否 + Stub 是 `@ConditionalOnMissingBean` 间接 verify
 
+### Cluster 4 (F4 QA 缓存) — 5/5 PASS, 1 个数据 bug
+
+| ID | 用例 | 结果 | 证据 |
+|---|---|---|---|
+| T4.1 | MISS → HIT 转换 | ✅ PASS | 首次 `source=LLM retrieved=1 latency=9ms`，二次 `source=CACHE retrieved=1 latency=12ms` |
+| T4.2 | embedding cache 写入 | ✅ PASS | `rag:embedding-cache:6cc3d385…` TTL=604800s=7d，与 `RedisEmbeddingCache.DEFAULT_TTL_SECONDS` 一致 |
+| T4.3 | answer cache TTL=24h | ✅ PASS | `rag:answer-cache:t1-tenant-alpha:6cc3d385…` TTL=86400s=24h（spec §13.6 一致），构造器对 ttlSeconds<=0 抛 IAE |
+| T4.4 | cache key 隔离 per-tenant | ✅ PASS | t1-tenant-beta 无 answer cache key，alpha 有（key prefix `rag:answer-cache:{tenant}:`） |
+| T4.5 | cache miss → 写回 → 二次 hit | ✅ PASS | 第一次完整 retrieve+LLM 走完，第二次直接 cache hit（queryHash 都是 `6cc3d385…`） |
+
+**关键设计发现**：
+- queryHash = rawText sha256（rewriter 不改写时 hash 原 query；改写时 hash rewritten query）
+- FALLBACK_RULE 时**不写 answer cache**（合理，避免缓存"我不知道"答案）
+- 3 tier cache 架构：JVM-local（stub 内部 ConcurrentHashMap） + Redis `rag:embedding-cache:*`（stub 走，TTL 7d） + Redis `rag:answer-cache:*`（QAService 写，TTL 24h） + Redis `rag:rewrite-cache:*`（rewriter 写）
+
+**修正 Bug #6 子症状 #2**：LESSONS 上一节写"StubEmbeddingGateway 不接 cache → embedding cache 不走 Redis"——**这是错的**。真实情况：QAServiceImpl 在 gateway 之上**自己**有旁路 embedding cache（L498-510 `safeEmbeddingCacheLookup` + `safeEmbeddingCacheStore`），所以 stub 不接 cache **对最终行为没影响**，Redis `rag:embedding-cache:*` keys 8 个存在（QAService 写的，不是 stub 直接写）。**Bug #6 主症状 #1（Chunk 缺 embeddingChannel）依然成立**。
+
+#### Bug #8 (MEDIUM, 数据残留) — t1-tenant-alpha 重新 ingest 后 permissionTags 不一致
+
+**症状**：cluster 4 真测时发现 t1-tenant-alpha 的 chunk `permissionTags = [role:admin]`——`role:user` 标签 retrieve 不到。cluster 1 测过的旧数据是 `role:user`/`public`，cluster 1 修复 Bug #1 后重新 ingest 时**手动改成了 `role:admin`**（大概率是测 T1.5/T1.6 时故意区分权限）。
+
+**根因**：IngestServiceImpl 没有默认 permissionTags 逻辑（L400 直接 `c.permissionTags()` 透传），所以**测试数据是手工传值**，不阻塞 production 但污染 cluster 4 之前的 cluster 1 数据真实性。
+
+**修复方向**（B 路线先记账不修）：
+- 重新 ingest t1-tenant-alpha 用 `[role:user]`，让 cluster 5 之后的 e2e 能用默认角色测
+- 或者：给 IngestService 加默认 `permissionTags=[role:user]` fallback（如果 c.permissionTags() 为空/缺失时）
+
+### Cluster 5 (F5 韧性 Resilience4j) — 配置 verify PASS, 端到端未测
+
+无 SiliconFlow API key → 走 stub → **CB 路径根本不执行**。Cluster 5 降级为**配置 + 静态代码 verify**：
+
+| 检查 | 结果 | 证据 |
+|---|---|---|
+| resilience4j 在 classpath | ✅ | `rag-pipeline/pom.xml`、`rag-embedding/pom.xml`、`pom.xml` 都引用 |
+| yml 配置 redis + siliconflow CB | ✅ | `slidingWindowSize:10, minimumNumberOfCalls:5, failureRateThreshold:50` |
+| SiliconFlowEmbeddingGateway 装饰 CB | ✅ | L246 `CircuitBreaker.decorateSupplier(circuitBreaker, upstream)` |
+| CB 状态机（CLOSED/OPEN/HALF_OPEN） | ❌ **未测** | 无 SiliconFlow key → 不走 CB 装饰路径 |
+| CB OPEN 后降级到 FALLBACK_RULE | ❌ **未测** | 同上 |
+| Retry-After 429 触发 | ❌ **未测** | QAServiceImpl 提到但 RateLimiter 不是 CB，cluster 5 范围外 |
+| Bulkhead（并发限流） | ❌ **未测** | yml 未配置 |
+
+**Cluster 5 范围 6/7 PASS（仅静态 verify），1/7 ❌ 端到端盲点**
+
+#### Bug #9 (MEDIUM) — CB 端到端测试覆盖盲点
+
+**症状**：spec §10 要求 SiliconFlow 失败时**降级到 FALLBACK_RULE/empty**，但当前 cluster 5 真测**完全不能验证降级路径**——因为 stub 路径不接 CB，无 key 时根本不走 CB 装饰。
+
+**根因**：
+- CB 只装饰 SiliconFlow gateway 的 HTTP 调用（L246）
+- 当前无 API key → stub 走 → CB 永远 CLOSED 没触发
+- 没有 mock HTTP server 或 testcontainers 模拟 SiliconFlow 失败
+- 没有 e2e 测试触发 CB OPEN → 验证降级
+
+**修复方向**（B 路线先记账不修）：
+- 选项 A：给 QAServiceImpl 之上加一个 stub-resilience wrapper（stub 也接 CB，调 in-process mock 失败计数器）
+- 选项 B：写 integration test 用 WireMock 模拟 SiliconFlow 5xx 触发 CB
+- 选项 C：接受 cluster 5 是配置 verify only，spec 端到端 CB 测试在 P8 加 e2e test infra 时一起做
+
+**推荐 C**（cluster 5 范围外，spec §17 testing infra 在 P8 单独做）
+
+### Cluster 1-5 终态汇总
+
+| Cluster | PASS/Total | 关键 bug |
+|---|---|---|
+| 1 (F1 多租户隔离) | 7/7 | Bug #1-#3 修于 `49e815b` |
+| 2 (F2 KB 版本管理) | 4/7 | Bug #5 (HIGH) 未修 |
+| 3 (F3 Embedding 双通道) | 3.5/5 | Bug #6 (HIGH, 修正子症状) + Bug #7 (MEDIUM) |
+| 4 (F4 QA 缓存) | 5/5 | Bug #8 (数据残留, 不阻塞) |
+| 5 (F5 韧性) | 1/7 (配置) | Bug #9 (测试覆盖盲点) |
+
+**5 个未修 bug 累计 (B 路线)**: #5 (HIGH) + #6 (HIGH) + #7 (MEDIUM) + #8 (MEDIUM) + #9 (MEDIUM)
+
+**P7 batch fix 收尾时建议**：
+- 必修: #5 (KB 隔离) + #6 (embeddingChannel)
+- 应修: #7 (stub 语义化)
+- 可选: #8 (数据 re-ingest) + #9 (e2e CB 测试)
+
+
