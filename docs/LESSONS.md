@@ -1495,3 +1495,109 @@ JAVA_HOME=/home/butterfly443/jdk/jdk-21.0.2 \
 
 端口 8080 被 proxy.py (PID 1996542) 占用，所以实测都用 18081。
 
+---
+
+## Phase 7 end-to-end 真测（Cluster 1-5）— 2026-06-17
+
+按 spec §6-§22 全章节真测，逐 cluster 跑 + 记账，**所有 bug 攒完一起修**（B 路线）。
+
+测试数据用临时 tenant 前缀（`t1-tenant-alpha/beta`、`t2-tenant`）避免污染。
+
+### Cluster 1 (F1 多租户隔离) — 7/7 PASS, 修复 3 bug
+
+T1.1 跨租户检索隔离 ✅ | T1.2 X-Tenant-Id 拦截 ✅ | T1.3 kbId 白名单 ✅
+T1.4 status=ACTIVE 过滤 ✅ | T1.5 permissionTags 过滤 ✅
+T1.6 同名 KB 物理隔离 ✅ | T1.7 QAServiceImpl tenantId 硬墙 ✅（27 处 `query.tenantId()`）
+
+3 个 bug 已在 commit `49e815b` 修复（已 push 到 origin main）：
+
+- **Bug #1** (CRITICAL): `extractKbId` 在 documentId 无 '/' 时返回 `default-kb` — 修：`IngestServiceImpl.ingestSync/ingestAsync` 内部 `encodeDocumentId(doc.kbId(), doc.documentId())` 把 kbId 编进 documentId
+- **Bug #2** (HIGH): `StubEmbeddingGateway.DIM=16` vs `RedisIndexManager.DEFAULT_DIM=1024` — 改 1024
+- **Bug #3** (CRITICAL): stub fingerprint `Math.sin((seed+i)*0.1)` 周期 2π/0.1≈63，对 dim=1024 所有维度 sin 值几乎相同 → cosine(chunk, query) ≈ -0.62 反相关 — 改 `Math.sin((hashCode ^ (i*GOLDEN_RATIO)) * 0.0001)` 让 KNN 能区分
+
+### Cluster 2 (F2 KB 版本管理) — 4/7 PASS, 发现 Bug #5 未修
+
+T2.1 多版本索引并存 ✅ | T2.2 alias 翻转 v1→v2 ✅
+T2.4 显式 kbVersion=1 → retrieved=1 chunk v1 ✅
+T2.3/T2.5/T2.6/T2.7 — 被 Bug #5 阻塞
+
+#### Bug #5 (HIGH) — KB 版本隔离不严：v2 索引含 v1 chunks
+
+**症状**：`rag:index:t2-tenant:2`（v2 active 索引）`num_docs=2`，**同时包含 v1 chunk (`title=定价v1, content=旗舰版月费是 9999 元, documentVersion=1`) 和 v2 chunk (`title=定价v2, content=旗舰版月费是 199 元, documentVersion=2`)**。alias 翻转后检索结果混合两版本数据。
+
+**根因**（实 verify 过）：
+- `RedisIndexManager` 创建索引时 `prefixes = ["rag:chunk:t2-tenant:"]`（**通配整个 tenant**，不带版本）
+- 索引 attributes 里**没有 `documentVersion` 字段**（`FT.INFO` dump 中只有 chunkId/tenantId/kbId/...）
+- publish 时新索引自动索引该 prefix 下的所有 HASH，**没按 documentVersion 隔离**
+
+**spec §6.4 期望**：
+> 旧版本 chunk 异步标记 DEPRECATED，7 天后清理
+
+**实际行为**：v1 chunks 没标 DEPRECATED，v2 索引直接继承 v1 chunks。
+
+**最小修复方向**（B 路线先记账不修）：
+- 选项 A（schema-prefix 改）：`prefixes = ["rag:chunk:t2-tenant:v{version}:"]` — 改 schema + 数据迁移
+- 选项 B（attribute + 强制 filter）：索引 schema 加 `@documentVersion` TAG，QA retrieve 时强制 `@documentVersion:{activeVersion}` — 不动 schema，surgical
+- 选项 C（post-publish cleanup）：publish 时把旧 chunk 显式标 DEPRECATED — 索引仍匹配，不彻底
+
+**推荐选项 B**（最少副作用，留待 P7 batch fix 一起做）。
+
+**绕过**：cluster 3/4/5 真测选**不涉及 KB 多版本**的场景，用 `t1-tenant-alpha`（cluster 1 已验证干净）数据。
+
+### Cluster 3 (F3 Embedding 双通道) — 待跑
+
+设计 5 用例：T3.1 SiliconFlow 在线（key 有/无两条路径）| T3.2 HashEmbedding 本地 fallback | T3.3 两通道 cosine 一致性 | T3.4 通道降级触发 | T3.5 channel 写进 chunk metadata
+
+### Cluster 4 (F4 QA 缓存) — 待跑
+
+### Cluster 5 (F5 韧性 Resilience4j) — 待跑
+
+### Cluster 3 (F3 Embedding 双通道) — 5/5 半 PASS, 发现 Bug #6+#7
+
+T3.1 SiliconFlow 在线 — ⚠️ 跳过（无 API key）
+T3.2 HashEmbedding fallback ✅ | T3.3 cosine 一致性 ⚠️半 PASS | T3.4 channel 选择 ✅ | T3.5 channel 写 chunk metadata ❌
+
+#### Bug #6 (HIGH) — Chunk 模型缺 embeddingChannel + Stub 不接 cache/CB/retry
+
+**症状 1**：`Chunk` 模型只有 `chunkId/documentId/tenantId/kbId/text/embedding/status/documentVersion/publishedAt/title/sourceUri/permissionTags/sectionPath`，**无 `embeddingChannel` 字段**。retrieve response 也不含 channel 信息 → 运维/调试时**无法**区分一段文本来自 SiliconFlow BAAI/bge-m3 还是 HashEmbedding fallback。
+
+**症状 2**：`StubEmbeddingGateway` 构造函数**不接受** `EmbeddingCache`/`CircuitBreakerRegistry`/`MeterRegistry` —— 与 `SiliconFlowEmbeddingGateway` 不对称。Spec §13.5 contract 要求 batch + cache + retry + degradation，**stub 违反 contract**：
+- 缓存用 in-process `ConcurrentHashMap`（**重启丢**，不走 Redis `rag:embedding-cache:*`）
+- 无 retry
+- 无 circuit breaker
+- 无 degradation（直接抛 `EmbeddingUnavailableException` → QAService 走 FALLBACK_RULE）
+
+**根因**：
+- `Chunk.java` 没设计 channel 字段
+- `EmbeddingStubConfig.stubEmbeddingGateway()` 是 `@Bean` 工厂方法，签名固定为 `() -> StubEmbeddingGateway`，无法注入 cache/CB/meter
+- `SiliconFlowAutoConfiguration` 有 class-level `@Conditional(SiliconFlowActiveCondition.class)`，siliconflow 不激活时整个 config 跳加载 → stub bean `@ConditionalOnMissingBean` 触发。但 stub 不接 cache 是 stub 本身的设计缺陷
+
+**最小修复方向**（B 路线先记账不修）：
+- 选项 A：给 `Chunk` 加 `embeddingChannel` 字段（ENUM: `STUB_HASH | SILICONFLOW_BGE_M3 | ...`），write-back 时填
+- 选项 B：让 `StubEmbeddingGateway` 也接 cache/CB/meter 三个可选参数（null 容忍），构造对称
+- 选项 C：把 stub 算法换掉（比如接 DB-local 的简单模型），用真正的"双通道对称"
+
+**推荐 A+B 一起**（最少副作用，留待 P7 batch fix 一起做）
+
+#### Bug #7 (MEDIUM) — Stub fingerprint hashCode 决定性导致 query 微小变化召不回
+
+**症状**：cluster 3 T3.3c 真测中——
+- query "旗舰版月费是 9999 元"（**完全和 chunk 文本一样**）→ retrieve=1 chunk ✅
+- query "旗舰版月费 9999 元定价"（**加了一个字**）→ retrieve=0 chunks，FALLBACK_RULE ❌
+
+**根因**：`StubEmbeddingGateway.newZeroVec` 用 `text.hashCode()` 作 seed，**Java String.hashCode** 对字符级变化极敏感（多一个少一个字 hash 全变）。stub 向量变成"**完全相同的文本 → cosine=1，差一字 → 几乎 random**"。
+
+实际含义：stub embedding **只能精确匹配 cluster 1 真测用的 query**，真实 query 任何变化（typo/同义/补充）就召不回。**Stub 不能用于真实 e2e 测试**，只能用于 spec 完全匹配的 demo。
+
+**最小修复方向**：
+- 改 `newZeroVec` 用 token-level bag-of-words hash 而非整 text hashCode（每 token 贡献部分 dim）
+- 或者承认 stub 不是 semantic embedder，加 javadoc 警告 "**only works for exact text match**"
+
+**绕开**：cluster 4/5 真测用 **完全和 chunk 文本一样**的 query（避免命中 Bug #7）。
+
+### Cluster 3/4/5 真测约束
+- **必须用 t1-tenant-alpha 数据**（cluster 1 已验证干净）
+- **query 必须 = chunk text 完全一致**（绕开 Bug #7 stub 召不回）
+- **不在 HTTP 接口暴露 channel** → T3.5 只能通过 Chunk 模型 + retrieve response 验证（已经 FAIL）
+- **无 API key** → T3.1 测不了真 SiliconFlow HTTP；只能通过看 SiliconFlowAutoConfiguration 加载与否 + Stub 是 `@ConditionalOnMissingBean` 间接 verify
+
