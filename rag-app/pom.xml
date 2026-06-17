@@ -89,14 +89,37 @@
 
     <build>
         <plugins>
+            <!--
+                spring-boot-maven-plugin's repackage goal OVERWRITES the default
+                jar (BOOT-INF/... layout), breaking downstream modules that
+                compile against rag-app's classes (e.g. rag-test's
+                @SpringBootTest references RagAppApplication). Two fixes:
+                1) Skip the spring-boot-maven-plugin's default `repackage`
+                   execution (which has no classifier and rewrites the main jar),
+                   so the plain maven-jar-plugin output survives untouched.
+                2) Add a SECOND repackage execution with classifier=boot so
+                   `java -jar rag-app-0.1.0-SNAPSHOT-boot.jar` still works.
+                Downstream (rag-test) resolves the plain jar's classpath; ops
+                deploys the -boot.jar.
+            -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <executions>
                     <execution>
+                        <id>repackage</id>
+                        <configuration>
+                            <skip>true</skip>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>repackage-boot</id>
                         <goals>
                             <goal>repackage</goal>
                         </goals>
+                        <configuration>
+                            <classifier>boot</classifier>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
