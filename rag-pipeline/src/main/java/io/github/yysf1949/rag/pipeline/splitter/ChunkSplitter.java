@@ -74,8 +74,15 @@ public final class ChunkSplitter {
         if (doc.sections().isEmpty()) {
             return out;
         }
+        // Document-level chunk counter — guarantees unique chunkIds across
+        // sections. The previous design used a per-section counter that
+        // reset to 0 each section, so the first chunk of every section
+        // collided on the same deterministic chunkId seed (docId+sectionPath+0)
+        // and overwrote each other in Redis. Cluster 7 真测 found that
+        // 3-section documents only kept 1 chunk in the index.
+        int[] globalIdx = {0};
         for (Document.Section section : doc.sections()) {
-            splitSection(doc, section, out);
+            splitSection(doc, section, out, globalIdx);
         }
         // Merge tail of the last section with the head (overlap seeding) — the
         // per-section loop already handles this internally; nothing extra here.
@@ -90,7 +97,7 @@ public final class ChunkSplitter {
 
     // ─── internals ─────────────────────────────────────────────────────────
 
-    private void splitSection(Document doc, Document.Section section, List<Chunk> sink) {
+    private void splitSection(Document doc, Document.Section section, List<Chunk> sink, int[] globalIdx) {
         List<String> segments = SentenceSegmenter.split(section.body());
         if (segments.isEmpty()) {
             return;
@@ -109,14 +116,14 @@ public final class ChunkSplitter {
                 if (!local.isEmpty()) {
                     String emitted = concat(local);
                     local.clear();
-                    local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, emitted));
+                    local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, emitted, globalIdx));
                 }
-                local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, seg));
+                local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, seg, globalIdx));
                 continue;
             }
 
             if (local.isEmpty()) {
-                local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, seg));
+                local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, seg, globalIdx));
                 continue;
             }
 
@@ -129,16 +136,16 @@ public final class ChunkSplitter {
                 if (nextContent.length() >= options.maxChars()) {
                     // Overlap tail alone is bigger than the segment — just
                     // start fresh with the segment (rare).
-                    local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, seg));
+                    local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, seg, globalIdx));
                 } else {
-                    local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, nextContent));
+                    local.add(buildChunk(doc, sectionPath, sectionChunkIndex++, nextContent, globalIdx));
                 }
                 continue;
             }
 
             // Append to the last chunk.
             String merged = current.content() + seg;
-            local.set(local.size() - 1, buildChunk(doc, sectionPath, sectionChunkIndex - 1, merged));
+            local.set(local.size() - 1, buildChunk(doc, sectionPath, sectionChunkIndex - 1, merged, globalIdx));
         }
 
         // Section-local merge of sub-minChars trailing chunks.
@@ -177,15 +184,17 @@ public final class ChunkSplitter {
     }
 
     private void emit(Document doc, String sectionPath, int chunkIndex,
-                      String content, List<Chunk> sink) {
-        sink.add(buildChunk(doc, sectionPath, chunkIndex, content));
+                      String content, List<Chunk> sink, int[] globalIdx) {
+        sink.add(buildChunk(doc, sectionPath, chunkIndex, content, globalIdx));
     }
 
-    private Chunk buildChunk(Document doc, String sectionPath, int chunkIndex, String content) {
-        // Use deterministic UUID seeded by (docId, sectionPath, chunkIndex)
+    private Chunk buildChunk(Document doc, String sectionPath, int chunkIndex, String content, int[] globalIdx) {
+        // Use deterministic UUID seeded by (docId, sectionPath, globalChunkIndex)
         // so the same input always produces the same chunkId — useful for
-        // idempotent re-ingest and for back-fill jobs.
-        String stableSeed = doc.documentId() + "|" + sectionPath + "|" + chunkIndex;
+        // idempotent re-ingest and for back-fill jobs. The global index
+        // (counter across all sections in the doc) avoids collisions between
+        // different sections that happen to share a section-local chunk index.
+        String stableSeed = doc.documentId() + "|" + sectionPath + "|" + globalIdx[0]++;
         String chunkId = UUID.nameUUIDFromBytes(stableSeed.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 .toString();
         return new Chunk(

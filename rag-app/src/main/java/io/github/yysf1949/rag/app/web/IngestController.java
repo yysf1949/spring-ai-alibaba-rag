@@ -98,7 +98,7 @@ public class IngestController {
                 body.sections == null ? List.of()
                         : body.sections.stream()
                                 .map(s -> new Document.Section(
-                                        s.heading == null ? "" : s.heading,
+                                        resolveHeading(s),
                                         s.content == null ? "" : s.content))
                                 .toList());
         IngestJob job = ingestService.ingestAsync(doc);
@@ -134,6 +134,18 @@ public class IngestController {
     public IngestJob publish(HttpServletRequest request, @PathVariable String jobId) {
         requiredTenant(request, request.getHeader(MdcTenantFilter.HEADER_TENANT));
         return ingestService.publish(jobId);
+    }
+
+    /**
+     * Pick the non-null breadcrumb path from an {@link IngestSection}, in
+     * preference order {@code heading → path → ""}. The {@code path} alias
+     * exists because the demo-refund-qa.sh script and several internal
+     * tools wire that name; see IngestSection's docstring.
+     */
+    private static String resolveHeading(IngestSection s) {
+        if (s.heading != null && !s.heading.isEmpty()) return s.heading;
+        if (s.path != null && !s.path.isEmpty()) return s.path;
+        return "";
     }
 
     /**
@@ -182,7 +194,16 @@ public class IngestController {
      * parsers produce "content" more often than "body").
      */
     public static class IngestSection {
+        // Canonical wire field is `heading` (matches Document.Section.heading
+        // and the IngestSection docstring). Many internal tools — including
+        // demo-refund-qa.sh — send `path` instead. We accept both: Jackson
+        // populates whichever it sees, and the controller's mapping loop
+        // falls back to whichever is non-null when building the Document.
+        // The extra `path` field is also marked @JsonIgnoreProperties-aware
+        // so unknown fields don't trigger a 400 (PathVariable-style
+        // strictness would otherwise reject `path` entirely).
         public String heading;             // breadcrumb path; optional
+        public String path;                // alias for `heading`; optional
         @NotBlank public String content;   // raw text
     }
 

@@ -35,8 +35,11 @@ application-local.yaml
 application-dev.yml
 **/secrets.yml
 **/secrets.yaml
+**/secrets.env
 # rag-embedding env templates: keep the .example, ignore the real .env
 rag-embedding/.env
+# User runtime secrets (e.g. SiliconFlow API key) — never commit
+.rag-runtime/
 # Local Maven staging for docker builds (see scripts/build-docker.sh)
 .docker-maven/
 # Hermes-managed secrets store
