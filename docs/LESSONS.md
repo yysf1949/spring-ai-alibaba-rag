@@ -1678,4 +1678,60 @@ T3.2 HashEmbedding fallback ✅ | T3.3 cosine 一致性 ⚠️半 PASS | T3.4 ch
 - 应修: #7 (stub 语义化)
 - 可选: #8 (数据 re-ingest) + #9 (e2e CB 测试)
 
+---
+
+## Phase 7 P7 batch fix 收尾 — 2026-06-17 (commit 29311d4)
+
+按 (A) 路线**修完 B 路线攒的 3 个 bug 并真测 verify**。每个 bug 独立真测验证 PASS。
+
+### Bug #5 (HIGH) — RedisVectorStore.publish() 现在调 deprecate()
+
+**修改**: `rag-redis/src/main/java/.../RedisVectorStore.java` publish() 末尾读旧 publish pointer → 调 `deprecate(tenantId, kbId, oldKbVersion)` 把旧 chunks 翻 DEPRECATED。
+
+**真测**（用 t6-tenant-fix fixture）:
+- 步骤 1: ingest v1 (3 chunks "9999 元"/"199 元"/"如何联系客服") → publish → 全部 status=ACTIVE
+- 步骤 2: ingest v2 (2 chunks "99 元 限时大促"/"支持7天无理由退款") → publish
+- 步骤 3: 验证 v1 3 chunks 全部 status=DEPRECATED，v2 2 chunks status=ACTIVE ✅
+
+**Spec §6.4 满足**: "旧版本 chunk 异步标记 DEPRECATED，7 天后清理"——deprecate 标 ✓，7天清理留给 ops（P8 范畴）
+
+### Bug #6 (HIGH) — Chunk 加 embeddingChannel 字段
+
+**新增**: `rag-core/src/main/java/.../EmbeddingChannel.java` enum（`STUB_HASH`, `SILICONFLOW_BGE_M3`）
+**修改**: `Chunk.java` record 末位加 `EmbeddingChannel embeddingChannel` 字段；compact constructor 默认 STUB_HASH（向后兼容 null）
+**修改**: `RedisChunkCodec.toHashFields` 写 `m.put("embeddingChannel", chunk.embeddingChannel().name())`；`fromHashFields` 反序列化用 `parseEmbeddingChannel`（缺/未知默认 STUB_HASH）
+**修改**: 4 个 `new Chunk(...)` 调用点 + 11 个 test helpers 加 `null` 末参
+
+**真测**: HGET `rag:chunk:t6-tenant-fix:...` `embeddingChannel` = `STUB_HASH` ✅
+
+### Bug #7 (MEDIUM) — StubEmbeddingGateway 改 3-gram bag-of-words
+
+**修改**: `newZeroVec` 从 per-dim `Math.sin(text.hashCode()^...)` 改为 char 3-gram bow + L2 normalize。每 trigram 贡献 3 个维度，相似文本共享多数 trigram。
+
+**真测**: query "旗舰版月费 9999 元"（省"是"字）→ retrieved=3 chunks ✅（旧算法：0 chunks）
+
+### ⚠️ 关键踩坑: mvn install vs mvn package (新 LESSONS)
+
+**症状**: 修完 RedisChunkCodec 后用 `mvn package` 重新打包，但 boot jar 时间戳没变；app 启动后 `HGET embeddingChannel` 仍然空。
+
+**根因**: `mvn package` 只跑到 `package` 阶段，**不会**重新触发 `spring-boot:repackage` 目标（spring-boot-maven-plugin 绑定到 `repackage` goal，run-once 在 install 阶段）。所以改了下游模块的字节码后，**`rag-app/target/*.jar` 和 `rag-app-boot.jar` 都没更新**。
+
+**修复**: 必须用 `mvn install`（不是 `package`）才能触发完整 repackage。或者手动跑 `mvn spring-boot:repackage -pl rag-app`。
+
+**LESSON**: 修改任何被 boot jar 包含的模块（rag-core/rag-pipeline/rag-redis/rag-embedding）后，**始终**用 `mvn install` 而不是 `mvn package`。可以加 shell 检查：
+```bash
+ls -la ~/.m2/repository/.../rag-app-boot.jar  # verify 时间戳 ≥ 源码修改时间
+```
+
+### 未修 (留 P8)
+- **Bug #8** (数据残留): t1-tenant-alpha 权限标签 `role:admin` 跟 query `role:user` 不匹配 —— 重新 ingest 即可
+- **Bug #9** (CB e2e 盲点): 无 SiliconFlow key → CB 路径不能端到端测 —— P8 加 WireMock
+
+### P7 batch fix 累计改动
+- 6 个生产文件 (EmbeddingChannel 新 + Chunk + ChunkSplitter + IngestServiceImpl + RedisChunkCodec + RedisVectorStore)
+- 12 个测试文件 (11 helper + 1 new test case)
+- 20 files / +144 / -46
+- commit: `29311d4` pushed
+
+
 
