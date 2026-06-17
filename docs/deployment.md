@@ -32,7 +32,25 @@ spring-ai-alibaba-rag/
     └── build-docker.sh       # 便捷构建脚本
 ```
 
-> **注**: Spec §3 原本要求 `docker/` 子目录,实际为保持 Docker 标准 (Dockerfile 在 root 是惯例),改为 root 布局。功能等价。
+> **ADR-001: Dockerfile / docker-compose.yml 路径 — spec §3 偏差是有意识决策**
+>
+> Spec §3 目录结构里写的是:
+> ```
+> docker/
+> ├── Dockerfile
+> └── docker-compose.yml
+> ```
+> 实际布局是 root (Dockerfile / docker-compose.yml / .dockerignore 在 repo 顶层)。
+>
+> **为什么不按 spec 搬?**
+> 1. **Docker industry 标准** — Dockerfile 默认 build context 是 `.`,绝大多数 CI / CD pipeline 假设 `Dockerfile` 在 root。
+> 2. **cluster 4 ship 时已定型** — 见 [docs/LESSONS.md §12.6](./LESSONS.md) "Cluster 4: Docker build — 5 pitfalls hit while shipping Dockerfile + compose",当时是 root 布局。
+> 3. **build context 复杂性** — Dockerfile 内 `COPY .docker-maven ${MAVEN_HOME}` 路径依赖 build context 在 root,搬到 `docker/` 后需要重新设计 (要么保留 `.docker-maven` 在 root 但 build context 改 `docker/` 加 `..`,要么所有 staging 目录一起搬)。
+> 4. **功能完全等价** — 不论 Dockerfile 在 `docker/` 还是 root,`docker build` / `docker compose` 都能用。
+>
+> **决定**: 维持 root 布局,但在 README.md §16 DoD 表 / docs/README.md / 本 ADR 三处都明示 spec 偏差是有意识决策,不是疏漏。
+>
+> **如未来真要搬** — 见 docs/evolution.md P0 路线图 "Helm chart" 阶段统一做 K8s-native 部署,届时 Dockerfile 走 `docker/` + Helm chart 走 `helm/` 一起搬,改动一次性集中。
 
 ### 2.2 Dockerfile (多阶段)
 

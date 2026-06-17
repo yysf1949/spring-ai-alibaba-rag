@@ -208,7 +208,7 @@ mvn -pl rag-test test -Dtest=RefundRuleEndToEndTest
 | `/actuator/health` 200 | ✅ (集群内未实测,见 RUNBOOK §3) |
 | `POST /api/ingest` 退款 MD → PUBLISHED | ✅ cluster 1 (`3dc3c62`) + `RefundRuleEndToEndTest` |
 | `POST /api/qa` 含"运费退还" + 引用 | ✅ 同上 |
-| `docker-compose up` 一键起 | ✅ (Dockerfile + compose 在 root) |
+| `docker-compose up` 一键起 | ⚠️ **spec 偏差 (ADR-001)** | Dockerfile / docker-compose.yml 在 root 而非 spec §3 的 `docker/`. 见 [docs/deployment.md §2.1](./docs/deployment.md). |
 | 22 节每节有 docs/ 入口 | ✅ 16 节映射表 (见上) |
 | README 含 Mermaid + 22 节映射 | ✅ 本文件 |
 | Push 到 yysf1949/spring-ai-alibaba-rag private | ✅ |
