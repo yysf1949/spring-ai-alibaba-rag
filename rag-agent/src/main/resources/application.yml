@@ -1,0 +1,24 @@
+# Phase 10 Agent 限流 + 指标配置
+resilience4j:
+  ratelimiter:
+    configs:
+      default:
+        limit-for-period: 100         # 默认 100 QPS/工具
+        limit-refresh-period: 1s
+        timeout-duration: 0           # 立即拒绝（不排队）
+
+# Agent 幂等存储 (Phase 10 Task 10)
+agent:
+  idempotency:
+    store: inmemory                  # 默认 InMemory; 切到 redis 需引入 rag-redis 依赖
+    redis-key-prefix: "agent:idem:"
+
+# Agent 指标导出 (Phase 10 Task 2)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: ${spring.application.name:rag-agent}
