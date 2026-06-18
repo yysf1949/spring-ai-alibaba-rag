@@ -3,6 +3,7 @@ package io.github.yysf1949.rag.agent.governance;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Objects;
@@ -33,24 +34,56 @@ public class StageAwareToolAuthorizer implements ToolAuthorizer {
     public static final RiskLevel CONFIRMED_MAX_RISK = RiskLevel.L3_BUSINESS_STATE;
 
     private final ToolRegistry registry;
+    private final List<ToolSelectionPolicy> policies;
 
     public StageAwareToolAuthorizer(ToolRegistry registry) {
+        this(registry, List.of());
+    }
+
+    @Autowired(required = false)
+    public StageAwareToolAuthorizer(ToolRegistry registry, List<ToolSelectionPolicy> policies) {
         this.registry = Objects.requireNonNull(registry, "registry");
+        this.policies = policies != null ? policies : List.of();
     }
 
     @Override
     public List<String> authorizedTools(AuthorizationContext ctx, List<String> allTools) {
+        return authorizedTools(ctx, allTools, null);
+    }
+
+    /**
+     * 增强版授权过滤 — 先按 riskLevel 过滤, 再遍历所有 {@link ToolSelectionPolicy} 进一步过滤。
+     *
+     * @param ctx               授权上下文
+     * @param allTools          全部工具名
+     * @param selectionContext  工具选择上下文 (null = 跳过 policy 过滤, 保持向后兼容)
+     * @return 最终允许的工具名子集
+     */
+    public List<String> authorizedTools(AuthorizationContext ctx, List<String> allTools,
+                                        ToolSelectionPolicy.ToolSelectionContext selectionContext) {
         if (ctx == null || allTools == null) return List.of();
         RiskLevel effectiveMax = ctx.maxRiskLevel() != null
                 ? ctx.maxRiskLevel()
                 : (ctx.requiresConfirmation() ? AWAITING_CONFIRMATION_MAX_RISK : CONFIRMED_MAX_RISK);
-        return allTools.stream()
+        List<String> filtered = allTools.stream()
                 .filter(name -> isAuthorized(name, ctx))
                 .filter(name -> {
                     // 再叠一层 effectiveMax 校验 (覆盖 ctx.maxRiskLevel 为 null 的退化路径)
                     return ToolAuthorizer.riskLevelAllowed(toolRiskLevel(name), effectiveMax);
                 })
                 .toList();
+
+        // 没有 policy 或没有 selectionContext → 跳过, 保持向后兼容
+        if (policies.isEmpty() || selectionContext == null) {
+            return filtered;
+        }
+
+        // 遍历所有 policy 进一步过滤 (取交集)
+        List<String> result = filtered;
+        for (ToolSelectionPolicy policy : policies) {
+            result = policy.filterTools(selectionContext, result);
+        }
+        return result;
     }
 
     @Override
