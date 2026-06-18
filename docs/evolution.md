@@ -207,7 +207,23 @@ Multi-region:
   - IdempotencyStore 走 Redis 持久化（opt-in by `agent.idempotency.store=redis`）
 - **下一阶段**: Phase 11 (已shipped) — 见下方
 
-## Phase 11 — 多存储后端持久化 (2026-06-18)
+## Phase 12 — 电商特价管理业务工具（2026-06-18）
+
+**新增 2 个业务工具**，补齐"客户问价/比价/降价索赔"场景：
+
+| 工具 | 方法 | 风险 | 说明 |
+|---|---|---|---|
+| **PriceProtectionTool** | `query_price_protection_policy` | L1 | 查询某商品价保政策 |
+| | `check_price_protection_eligibility` | L1 | 查询某订单是否符合价保条件 |
+| | `apply_price_protection` | L3 | 申请价保退差价（200 元门控） |
+| **PromotionTool** | `query_product_promotions` | L1 | 查询某商品当前参与的促销 |
+| | `query_all_active_promotions` | L1 | 查询所有进行中的促销 |
+
+- `PriceProtectionPort` + `InMemoryPriceProtectionRepository`：价保申请记录存储（InMemory，未来可扩展 H2/MySQL/Redis）
+- `PromotionTool`：纯读 mock 数据（类似 LogisticsTool）
+- 全仓库测试 **148/148**，0 回归
+
+## Phase 11 — 多存储后端持久化（2026-06-18）
 
 - **Status**: shipped
 - **Range**: 4 Port interfaces + H2 embedded + MySQL JPA + Redis 3 种持久化后端
