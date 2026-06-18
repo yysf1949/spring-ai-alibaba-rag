@@ -35,7 +35,8 @@ public class OrderTool {
 
     @ToolSpec(
             name = "get_order",
-            description = "查询订单详情（订单号、金额、状态）。只读工具。",
+            description = "查询订单详情：返回订单号、金额(分)、状态(CREATED/PAID/SHIPPED/COMPLETED/CANCELLED)、用户ID。"
+                    + "适用于：用户问'我的订单'、'订单到哪了'、'订单多少钱'。只读工具，不修改任何数据。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false
@@ -49,8 +50,8 @@ public class OrderTool {
 
     @ToolSpec(
             name = "list_orders",
-            description = "查询用户的订单列表（只读）。适用于：用户说'我最近的订单'、'查一下我的订单'。"
-                    + "返回订单列表（订单号、金额、状态），用户可据此选择具体订单。",
+            description = "按用户查询订单列表，返回简要信息(订单号、金额、状态)。"
+                    + "适用于：用户说'我最近的订单'、'查一下我的所有订单'。只读工具，用户可据此选择具体订单进一步操作。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false
@@ -65,7 +66,8 @@ public class OrderTool {
 
     @ToolSpec(
             name = "cancel_order",
-            description = "取消订单（未发货可取消，超过 100 元需转人工审批）。",
+            description = "取消CREATED或PAID状态的订单。单笔≤100元可自动执行，超过100元需转人工。"
+                    + "幂等：已取消订单直接返回当前状态。不支持取消已发货/已签收订单。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = false,
             requiresIdempotencyKey = true,

@@ -1,0 +1,82 @@
+package io.github.yysf1949.rag.agent.builtin;
+
+import io.github.yysf1949.rag.agent.action.RiskLevel;
+import io.github.yysf1949.rag.agent.action.ToolSpec;
+import io.github.yysf1949.rag.agent.builtin.port.SatisfactionSurveyPort;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Objects;
+
+/**
+ * 满意度调查工具 — L2 可逆（写入评分数据，但不影响核心业务态）。
+ *
+ * <p>会话结束时收集用户满意度评分和反馈，用于服务质量监控和持续改进。</p>
+ */
+@Component
+public class SatisfactionSurveyTool {
+
+    private final SatisfactionSurveyPort repo;
+
+    public SatisfactionSurveyTool(SatisfactionSurveyPort repo) {
+        this.repo = Objects.requireNonNull(repo, "repo");
+    }
+
+    @ToolSpec(
+            name = "submit_satisfaction_survey",
+            description = "提交用户满意度调查（评分 1-5 + 文字反馈 + 是否已解决）。",
+            riskLevel = RiskLevel.L2_REVERSIBLE,
+            idempotent = false,
+            requiresIdempotencyKey = false
+    )
+    public SurveyResponse submitSurvey(SurveyRequest req) {
+        Objects.requireNonNull(req, "req");
+
+        // 评分范围校验
+        if (req.rating() < 1 || req.rating() > 5) {
+            throw new IllegalArgumentException(
+                    "Rating must be between 1 and 5, got: " + req.rating());
+        }
+
+        String surveyId = "SRV-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        var record = new SatisfactionSurveyPort.SurveyRecord(
+                surveyId,
+                req.tenantId(),
+                req.userId(),
+                req.conversationId(),
+                req.rating(),
+                req.feedback(),
+                req.resolved(),
+                System.currentTimeMillis());
+        repo.save(record);
+
+        return new SurveyResponse(surveyId, req.rating(), req.resolved(), "感谢您的反馈！");
+    }
+
+    @ToolSpec(
+            name = "list_surveys_by_conversation",
+            description = "查询会话关联的满意度调查记录（只读）。",
+            riskLevel = RiskLevel.L1_READ,
+            idempotent = true,
+            requiresIdempotencyKey = false
+    )
+    public List<SatisfactionSurveyPort.SurveyRecord> listByConversation(String conversationId) {
+        return repo.findByConversation(conversationId);
+    }
+
+    public record SurveyRequest(
+            String tenantId,
+            String userId,
+            String conversationId,
+            int rating,
+            String feedback,
+            boolean resolved
+    ) {}
+
+    public record SurveyResponse(
+            String surveyId,
+            int rating,
+            boolean resolved,
+            String message
+    ) {}
+}

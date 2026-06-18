@@ -24,7 +24,8 @@ public class CouponTool {
 
     @ToolSpec(
             name = "issue_coupon",
-            description = "补发优惠券（单张超过 200 元需转人工审批）。",
+            description = "补发优惠券，单张≤200元可自动执行，>200元需转人工审批。"
+                    + "适用场景：售后补偿、活动奖励、客户挽留。调用方必须传 idempotencyKey 防重复发放。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = false,
             requiresIdempotencyKey = true,
@@ -45,7 +46,8 @@ public class CouponTool {
 
     @ToolSpec(
             name = "list_active_coupons",
-            description = "查询用户当前有效优惠券列表（只读）。",
+            description = "查询用户当前可用的优惠券列表。"
+                    + "适用于：用户问'我有什么优惠券'、'有没有可用的券'。只读工具，返回优惠券ID、金额、来源标签。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false

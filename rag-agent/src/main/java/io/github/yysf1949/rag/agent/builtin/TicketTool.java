@@ -52,9 +52,9 @@ public class TicketTool {
 
     @ToolSpec(
             name = "create_reminder_ticket",
-            description = "为当前用户创建一条提醒工单（不修改订单/支付/库存）。"
-                    + "适用于'kb_search 返回 FALLBACK_RULE / 用户表示要人工跟进'等场景。"
-                    + "调用方必须传 idempotencyKey；同 key 重复调用返回上次结果。",
+            description = "创建跟进工单，工单创建后通知人工客服。"
+                    + "适用场景：(1)知识库查不到答案需人工跟进 (2)用户要求转人工 (3)退款/投诉超出自动处理范围。"
+                    + "调用方必须传 idempotencyKey；同key重复调用返回上次结果(幂等)。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
             idempotent = false,
             requiresIdempotencyKey = true)

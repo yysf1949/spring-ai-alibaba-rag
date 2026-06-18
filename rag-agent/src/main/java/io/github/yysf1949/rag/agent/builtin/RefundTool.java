@@ -36,7 +36,8 @@ public class RefundTool {
 
     @ToolSpec(
             name = "create_refund",
-            description = "创建退款申请（待审批），单笔超过 500 元需转人工。",
+            description = "创建退款申请，需提供确认令牌(confirmationToken)。退款金额≤500元可自动审批，>500元需人工审批。"
+                    + "幂等防重复退款。触发业务规则(组合优惠/退款期/支付渠道)时自动转人工。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = false,
             requiresIdempotencyKey = true,
@@ -70,7 +71,8 @@ public class RefundTool {
 
     @ToolSpec(
             name = "approve_refund",
-            description = "审批通过退款申请（直接打款 — L4 高风险，仅 admin 角色可执行）。",
+            description = "审批退款申请，审批通过后直接打款。仅人工客服(admin角色)可执行，仅当退款金额>500元时才需要调用。"
+                    + "幂等：同一退款单重复审批直接返回当前状态。",
             riskLevel = RiskLevel.L4_HIGH_RISK,
             idempotent = true,  // 同 refundId + admin 重复审批 = 幂等
             requiresIdempotencyKey = true

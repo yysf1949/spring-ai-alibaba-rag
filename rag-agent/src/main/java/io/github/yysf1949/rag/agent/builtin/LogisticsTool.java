@@ -19,7 +19,8 @@ public class LogisticsTool {
 
     @ToolSpec(
             name = "query_logistics",
-            description = "查询订单物流轨迹（只读）。",
+            description = "查询订单的物流信息：快递公司、运单号、当前状态(待揽收/运输中/派送中/已签收)、最新位置、签收时间。"
+                    + "适用于：用户问'快递到哪了'、'什么时候到'。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false

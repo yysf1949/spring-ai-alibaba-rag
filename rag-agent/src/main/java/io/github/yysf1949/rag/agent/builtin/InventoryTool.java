@@ -23,8 +23,8 @@ public class InventoryTool {
 
     @ToolSpec(
             name = "check_stock",
-            description = "查询商品库存信息（库存数量、是否在售、价格、品类）。只读工具。"
-                    + "适用于：判断商品是否有货、是否可换货、查价格。",
+            description = "查询商品库存信息：库存数量、是否在售、价格(分)、品类。"
+                    + "适用于：判断商品是否有货、是否可换货、查价格。只读工具，不修改库存数据。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false
