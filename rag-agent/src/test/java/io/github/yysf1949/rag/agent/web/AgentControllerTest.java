@@ -6,6 +6,7 @@ import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.api.AgentService;
 import io.github.yysf1949.rag.agent.builtin.KbSearchTool;
+import io.github.yysf1949.rag.agent.orchestration.ChatClientService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -26,6 +27,9 @@ class AgentControllerTest {
     @Autowired private MockMvc mvc;
     @Autowired private ObjectMapper objectMapper;
     @MockBean private AgentService agentService;
+    // Phase 16 Task 3: AgentController 新增 ChatClientService 依赖; @WebMvcTest 不装配 ChatClient,
+    // 这里 mock 占位让 spring 注入成功. chat 路径的覆盖由 AgentControllerChatEndpointTest 负责.
+    @MockBean private ChatClientService chatClientService;
 
     @Test
     void invokeReturns200() throws Exception {
