@@ -186,6 +186,7 @@ public abstract class JdbcKbVersionService implements KbVersionService {
         return requested;
     }
 
+    @Override
     public final void registerVersion(String tenantId, String kbId, long versionId,
                                       KbVersionMeta.Status initialStatus, String sourceLabel) {
         validateAll(tenantId, kbId, versionId);

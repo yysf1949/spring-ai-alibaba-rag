@@ -72,5 +72,12 @@
             <artifactId>mockito-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <!-- H2 in-memory DB for KbVersionService integration tests (Phase 18 P2).
+                 Runtime classpath for rag-app H2 backend comes from the consuming module. -->
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

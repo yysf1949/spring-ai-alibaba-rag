@@ -86,18 +86,35 @@ public interface KbVersionService {
      *         if either version does not exist
      */
     void rollback(String tenantId, String kbId, long versionId);
-
     /**
-     * Resolve a caller's {@code kbVersion} request to the actual version id
-     * the {@link RetrievalPort} should search:
+     * Resolve a "client request" version id into a concrete version id.
+     *
+     * <p>Semantics:
      * <ul>
-     *   <li>{@code requested < 0} (e.g. {@code -1}) → active version, or
-     *       {@link io.github.yysf1949.rag.core.exception.KbVersionNotFoundException}
-     *       if the KB has never been published.</li>
-     *   <li>{@code requested >= 0} → that specific version, or
-     *       {@link io.github.yysf1949.rag.core.exception.KbVersionNotFoundException}
-     *       if it doesn't exist.</li>
+     *   <li>{@code requested < 0} → return the currently active version id, or
+     *       throw {@link io.github.yysf1949.rag.core.exception.KbVersionNotFoundException}
+     *       if there is none (KB has never been published).</li>
+     *   <li>{@code requested >= 0} → return {@code requested} unchanged, or
+     *       throw {@link io.github.yysf1949.rag.core.exception.KbVersionNotFoundException}
+     *       if that version does not exist.</li>
      * </ul>
      */
     long resolveVersion(String tenantId, String kbId, long requested);
+
+    /**
+     * Register a new version row in the store. Idempotent: re-registering
+     * the same (tenant, kb, version) triple is a no-op (first registration
+     * wins).
+     *
+     * <p>This is a {@code lifecycle} method on the service rather than a
+     * dedicated "ingestion" port because (a) it's small, (b) the same store
+     * already owns the metadata schema, and (c) separating it would force
+     * two new ports to share the same backend — overkill for now.</p>
+     *
+     * <p>Typically called by the ingest pipeline after staging the KB
+     * chunks: "the kbVersion=N is ready, register it as DRAFT or STAGING".</p>
+     */
+    void registerVersion(String tenantId, String kbId, long versionId,
+                         io.github.yysf1949.rag.core.model.KbVersionMeta.Status initialStatus,
+                         String sourceLabel);
 }

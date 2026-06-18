@@ -159,6 +159,7 @@ public class RedisKbVersionService implements KbVersionService {
 
     // ---- package-private helpers used by tests / sibling stores ------------
 
+    @Override
     public void registerVersion(String tenantId, String kbId, long versionId,
                                 KbVersionMeta.Status initialStatus, String sourceLabel) {
         validateAll(tenantId, kbId, versionId);
@@ -186,6 +187,7 @@ public class RedisKbVersionService implements KbVersionService {
 
     private void setStatus(String tenantId, String kbId, long versionId,
                            KbVersionMeta.Status status) {
+        // 3-arg overload exists in jedis 5.2.0 for single-field updates.
         jedis.hset(metaKey(tenantId, kbId, versionId), "status", status.name());
     }
 
