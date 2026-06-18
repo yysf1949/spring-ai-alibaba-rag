@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.yysf1949.rag</groupId>
+        <artifactId>spring-ai-alibaba-rag</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>rag-agent</artifactId>
+    <name>rag-agent</name>
+    <description>
+        Agent Action Layer — 把企业后端 Service 改造成 AI Agent 可安全调用的工具集。
+        3 层架构（编排 / 动作 / 治理），对齐「路条编程」AI 客服文章方法论。
+        Tool Calling 走 Spring AI 1.0.9 FunctionCallingCallback，预留 ToolDescriptor 抽象层
+        以兼容未来 2.0 @Tool 升级。
+    </description>
+
+    <dependencies>
+        <!-- 领域模型 + port 接口（leaf 模块） -->
+        <dependency>
+            <groupId>io.github.yysf1949.rag</groupId>
+            <artifactId>rag-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- 编排层需要 Spring AI 1.0.9 的 FunctionCallback/FunctionToolCallback 接口。
+             注：Spring AI 1.0.9 的 BOM 中没有 spring-ai-core（0.x 时代的 artifact），
+             1.0.9 把"core"拆成 spring-ai-commons / spring-ai-model 等多个 jar。
+             FunctionCallback 相关类位于 spring-ai-model jar 下
+             （org.springframework.ai.tool.function.FunctionToolCallback）。
+             plan 文档写的 spring-ai-core 在 1.0.9 BOM 中不存在，无法 resolve。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-model</artifactId>
+        </dependency>
+
+        <!-- Spring 上下文（编排层用 Bean 注入；治理层用 @ConditionalOnProperty） -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+        </dependency>
+
+        <!-- Resilience4j：治理层风险门控需要 @Retry / @RateLimiter -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+        </dependency>
+
+        <!-- Micrometer 指标 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- 测试 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

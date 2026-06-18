@@ -26,6 +26,7 @@
     <url>https://github.com/yysf1949/spring-ai-alibaba-rag</url>
 
     <modules>
+        <module>rag-agent</module>
         <module>rag-core</module>
         <module>rag-embedding</module>
         <module>rag-redis</module>
