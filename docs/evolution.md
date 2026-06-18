@@ -350,3 +350,47 @@ Multi-region:
 - DefaultAgentLoop 集成 ctx（避免改已 ship 链路）
 - LLM 阶段识别（基于对话上下文判断 stage）— 需真实 LLM key
 - 反向授权撤销 / session 级 ctx 缓存
+
+---
+
+## Phase 15 — LLM ChatClient 接入 + AuthorizationContext E2E 联调（2026-06-18）
+
+**目标**：把 Phase 14 ship 的 `AuthorizationContext` + `StageAwareToolAuthorizer` 真正串到 Spring AI ChatClient，让 LLM 真实看到的 tool 列表受 ctx 控制。
+
+### 关键交付
+
+| 模块 | 文件 | 职责 |
+|---|---|---|
+| **spring-ai-openai 依赖** | `rag-agent/pom.xml` | Spring AI 1.0.9 BOM 管理 `spring-ai-starter-model-openai`（注：Spring AI 1.0 GA 后改名前缀，旧名 `spring-ai-openai-spring-boot-starter` 只到 1.0.0-M6） |
+| **application-deepseek.yml** | `rag-agent/src/main/resources/application-deepseek.yml` | OpenAI-compatible base-url=`https://api.deepseek.com`, model=`deepseek-chat`, **API key 仅通过 `${DEEPSEEK_API_KEY}` 环境变量注入**（不进 git） |
+| **DeepSeekChatClientConfig** | `orchestration/DeepSeekChatClientConfig.java` | `@Profile("deepseek")` + `@ConditionalOnProperty(api-key)` 双层闸门，默认 dev/test profile 不启 ChatClient |
+| **ChatClientService** | `orchestration/ChatClientService.java` | 接收 userMessage + AuthorizationContext → 用 ctx 过滤的 FunctionToolCallbacks 调 ChatClient → 返回 AssistantMessage content |
+| **ChatClientServiceMockTest** | `test/.../ChatClientServiceMockTest.java` | 3 个 mock 用例验证 ctx 过滤效果（confirmed→7 tool, awaiting→5 tool, null→permissive fallback） |
+| **ChatClientServiceE2ETest** | `test/.../ChatClientServiceE2ETest.java` | 真实 DeepSeek API E2E（`@EnabledIfEnvironmentVariable("DEEPSEEK_API_KEY")` 缺 key 自动 skip） |
+
+### 关键决策
+
+1. **不依赖 Spring 上下文装配**：E2E test 手工用 Builder API 装配 `OpenAiApi` → `OpenAiChatModel` → `ChatClient.create(model)`，避免污染 rag-agent library 模块的测试环境
+2. **数组协变桥接**：`SpringAiAgentAdapter.getFunctionCallbacks(ctx)` 返回 `FunctionToolCallback[]`，而 `ChatClient.toolCallbacks(List<ToolCallback>)` 接父接口 List——在 ChatClientService 内做 `FunctionToolCallback[] → List<ToolCallback>` 桥接
+3. **Phase 14 已 ship 不动**：仅复用 `getFunctionCallbacks(ctx)` 接口（Phase 14 ship），不在 Phase 15 改 SpringAiAgentAdapter
+4. **范围裁剪**：不改 `AgentController` / `DefaultAgentLoop`（既有链路 surgical 保留）；ChatClientService 作为**平行新入口**，等 Phase 16 再串 Controller
+5. **API key 安全契约**：yml 只写占位符 `${DEEPSEEK_API_KEY}`；测试用 `System.getenv()`；任何文件/git/history 不出现字面 key
+
+### 验证结果
+
+| 检查项 | 命令 | 结果 |
+|---|---|---|
+| 依赖 resolve | `mvn -pl rag-agent test-compile` | ✅ |
+| 全仓库测试 | `mvn -pl rag-agent test` | ✅ **213 tests, 0 fail, 1 skipped** (E2E 因无 key skip) |
+| Mock ctx 过滤 | `mvn test -Dtest=ChatClientServiceMockTest` | ✅ 3/3 PASS（confirmed=7, awaiting=5, null=permissive） |
+| 真实 DeepSeek API | `DEEPSEEK_API_KEY=*** mvn test -Dtest=ChatClientServiceE2ETest` | 用户本地执行（agent sandbox 不支持 inline 完整 key 注入） |
+| API key 未泄漏 | `git diff --cached \| grep sk-` | ✅ 空 |
+| 远端 MATCH | `git ls-remote origin feature/agent-action-layer` | ✅ |
+
+### Phase 15 不做（推迟到 Phase 16+）
+
+- AgentController 接入 ChatClientService（HTTP 入口与 ChatClient 串通的架构决策）
+- SSE 流式响应（`stream()` 替代 `call()`）
+- 多轮对话历史（`MessageChatMemoryAdvisor` 集成）
+- RAG 检索问答（ChatClient + VectorStore 混搭）
+- 多 backend 切换（纯 OpenAI key / Azure OpenAI）
