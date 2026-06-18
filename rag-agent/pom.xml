@@ -56,6 +56,13 @@
             <artifactId>micrometer-core</artifactId>
         </dependency>
 
+        <!-- Phase 10: Prometheus 指标导出（4 类 Agent 指标走 /actuator/prometheus） -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
