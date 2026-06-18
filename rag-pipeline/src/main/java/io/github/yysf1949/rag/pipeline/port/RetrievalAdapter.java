@@ -1,15 +1,18 @@
 package io.github.yysf1949.rag.pipeline.port;
 
+import io.github.yysf1949.rag.core.exception.DocumentVersionNotFoundException;
 import io.github.yysf1949.rag.core.exception.KbVersionNotFoundException;
 import io.github.yysf1949.rag.core.model.Chunk;
 import io.github.yysf1949.rag.core.model.PermissionMode;
 import io.github.yysf1949.rag.core.model.RetrievedChunk;
+import io.github.yysf1949.rag.core.port.DocumentVersionService;
 import io.github.yysf1949.rag.core.port.EmbeddingGateway;
 import io.github.yysf1949.rag.core.port.KbVersionService;
 import io.github.yysf1949.rag.core.port.RetrievalPort;
 import io.github.yysf1949.rag.core.port.VectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 
@@ -58,28 +61,42 @@ public class RetrievalAdapter implements RetrievalPort {
     private final VectorStore vectorStore;
     private final EmbeddingGateway embeddingGateway;
     private final KbVersionService kbVersionService;
+    private final DocumentVersionService documentVersionService;
 
     /**
-     * Phase 18 P2 constructor — wires in {@link KbVersionService}.
+     * Phase 19 constructor — wires in {@link DocumentVersionService} on top of
+     * the Phase 18 P2 {@link KbVersionService} injection.
      *
-     * <p>{@code kbVersionService} is allowed to be {@code null} for backward
-     * compatibility with tests that hand-build a {@code RetrievalAdapter}
-     * without a full Spring context. When {@code null}, the adapter behaves
-     * exactly as it did pre-P2: pass {@code requested} through unchanged and
-     * rely on each backend's internal "0 = active" convention.</p>
+     * <p>Both services are allowed to be {@code null} for backward compatibility
+     * with tests that hand-build a {@code RetrievalAdapter} without a full
+     * Spring context. When {@code null}, the adapter behaves exactly as it did
+     * pre-P2: pass {@code requested} through unchanged and rely on each
+     * backend's internal {@code 0 = active} convention.</p>
      */
     public RetrievalAdapter(VectorStore vectorStore,
                             EmbeddingGateway embeddingGateway,
-                            @org.springframework.beans.factory.annotation.Autowired(required = false)
-                            KbVersionService kbVersionService) {
+                            @Autowired(required = false) KbVersionService kbVersionService,
+                            @Autowired(required = false) DocumentVersionService documentVersionService) {
         this.vectorStore = vectorStore;
         this.embeddingGateway = embeddingGateway;
         this.kbVersionService = kbVersionService;
+        this.documentVersionService = documentVersionService;
     }
 
-    /** Legacy constructor — kept so unit tests that mock just (VectorStore, EmbeddingGateway) keep compiling. */
+    /**
+     * Phase 18 P2 constructor — kept for backward compatibility.
+     */
+    public RetrievalAdapter(VectorStore vectorStore,
+                            EmbeddingGateway embeddingGateway,
+                            @Autowired(required = false) KbVersionService kbVersionService) {
+        this(vectorStore, embeddingGateway, kbVersionService, null);
+    }
+
+    /**
+     * Legacy constructor — kept so unit tests that mock just (VectorStore, EmbeddingGateway) keep compiling.
+     */
     public RetrievalAdapter(VectorStore vectorStore, EmbeddingGateway embeddingGateway) {
-        this(vectorStore, embeddingGateway, null);
+        this(vectorStore, embeddingGateway, null, null);
     }
 
     @Override
@@ -90,6 +107,40 @@ public class RetrievalAdapter implements RetrievalPort {
             String query,
             int topK,
             List<String> userPermissionTags
+    ) {
+        return search(tenantId, kbId, kbVersion, query, topK, userPermissionTags, null);
+    }
+
+    /**
+     * Phase 19: extended search overload with per-document version override.
+     *
+     * <p>Resolution priority for which version of a document to retrieve:
+     * <ol>
+     *   <li><b>Caller override</b> — entries in {@code docVersionOverrides}
+     *       keyed by {@code documentId}. Highest priority; lets callers pin a
+     *       specific doc to a specific version (e.g. rollback one doc without
+     *       touching the rest of the KB).</li>
+     *   <li><b>{@link DocumentVersionService}</b> — when a service is wired
+     *       in and the chunk's {@code documentId} is non-null, resolve via
+     *       {@link DocumentVersionService#resolveVersion} (handles
+     *       {@code -1} → active).</li>
+     *   <li><b>{@link KbVersionService}</b> — for {@code kbVersion < 0}, resolve
+     *       via {@link KbVersionService#resolveVersion} (Phase 18 P2 path).</li>
+     *   <li><b>Pass-through</b> — for {@code kbVersion >= 0} with no override
+     *       and no document resolution, use {@code kbVersion} as-is.</li>
+     * </ol>
+     *
+     * @param docVersionOverrides per-document version override map; may be
+     *                            {@code null} or empty. Keys are {@code docId}.
+     */
+    public List<RetrievedChunk> search(
+            String tenantId,
+            String kbId,
+            long kbVersion,
+            String query,
+            int topK,
+            List<String> userPermissionTags,
+            Map<String, Long> docVersionOverrides
     ) {
         if (tenantId == null || tenantId.isBlank()) {
             throw new IllegalArgumentException("tenantId must not be blank");
@@ -104,15 +155,16 @@ public class RetrievalAdapter implements RetrievalPort {
             topK = 5;
         }
         List<String> tags = userPermissionTags == null ? List.of() : userPermissionTags;
+        Map<String, Long> overrides = docVersionOverrides == null ? Map.of() : docVersionOverrides;
 
         // Phase 18 P2: resolve kbVersion via KbVersionService when available.
         // This gives us cross-backend consistent semantics for "use the active
         // version" instead of relying on each backend's internal convention.
-        long effectiveVersion = kbVersion;
+        long effectiveKbVersion = kbVersion;
         if (kbVersionService != null && kbVersion < 0) {
             try {
-                effectiveVersion = kbVersionService.resolveVersion(tenantId, kbId, kbVersion);
-                log.debug("RetrievalAdapter: kbVersion {} -> effective {}", kbVersion, effectiveVersion);
+                effectiveKbVersion = kbVersionService.resolveVersion(tenantId, kbId, kbVersion);
+                log.debug("RetrievalAdapter: kbVersion {} -> effective {}", kbVersion, effectiveKbVersion);
             } catch (KbVersionNotFoundException ex) {
                 // No active version → return empty result (consistent with
                 // KbNotFoundException semantics — caller will surface 200 + empty).
@@ -141,21 +193,76 @@ public class RetrievalAdapter implements RetrievalPort {
                 queryVector,
                 tenantId,
                 kbId,
-                effectiveVersion,
+                effectiveKbVersion,
                 tags,
                 PermissionMode.AND,
                 topK);
 
         if (raw == null || raw.isEmpty()) {
             log.debug("RetrievalAdapter.search: no chunks (tenantId={}, kbId={}, kbVersion={})",
-                    tenantId, kbId, effectiveVersion);
+                    tenantId, kbId, effectiveKbVersion);
             return List.of();
         }
 
         // 3. Map Chunk -> RetrievedChunk + recompute cosine score
+        // Phase 19: if DocumentVersionService is wired, prefer its resolved
+        // version for the chunk's docId (overrides win over service, service
+        // wins over kbVersion).
         return raw.stream()
                 .map(c -> toRetrievedChunk(c, queryVector))
+                .filter(rc -> keepByDocVersion(rc, overrides, tenantId, kbId))
                 .toList();
+    }
+
+    /**
+     * Phase 19: filter / down-rank retrieved chunks based on per-doc version
+     * override or {@link DocumentVersionService} resolution.
+     *
+     * <p>For now we <strong>drop</strong> chunks whose resolved doc-version
+     * doesn't match what the caller asked for (override map) or what the
+     * service resolved. This keeps the contract simple: callers who pass
+     * overrides get exactly those doc versions. Callers who don't, get what
+     * the service says is active. In the future this could be a soft
+     * re-rank, but a hard filter matches the P2 semantic ("list active
+     * versions, rollback active version").</p>
+     */
+    private boolean keepByDocVersion(RetrievedChunk rc,
+                                     Map<String, Long> overrides,
+                                     String tenantId,
+                                     String kbId) {
+        String docId = rc.metadata() == null ? null : rc.metadata().get("documentId");
+        if (docId == null || docId.isBlank()) {
+            // No documentId on chunk — cannot apply per-doc version filter;
+            // keep it (Phase 17/18 behavior).
+            return true;
+        }
+        // Priority 1: caller override.
+        Long overrideVersion = overrides.get(docId);
+        if (overrideVersion != null) {
+            long chunkDocVersion = parseLong(rc.metadata().get("documentVersion"), 0L);
+            return chunkDocVersion == overrideVersion;
+        }
+        // Priority 2: DocumentVersionService (only when no explicit
+        // kbVersion override was supplied — i.e. caller asked for "active").
+        if (documentVersionService != null) {
+            try {
+                long activeDocVersion = documentVersionService.resolveVersion(tenantId, kbId, docId, -1L);
+                long chunkDocVersion = parseLong(rc.metadata().get("documentVersion"), 0L);
+                return chunkDocVersion == activeDocVersion;
+            } catch (DocumentVersionNotFoundException ex) {
+                // No active version for this doc → drop it.
+                log.debug("RetrievalAdapter: no active doc version for tenant={} kb={} doc={}",
+                        tenantId, kbId, docId);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static long parseLong(String value, long fallback) {
+        if (value == null || value.isBlank()) return fallback;
+        try { return Long.parseLong(value.trim()); }
+        catch (NumberFormatException ex) { return fallback; }
     }
 
     private RetrievedChunk toRetrievedChunk(Chunk c, float[] queryVector) {
