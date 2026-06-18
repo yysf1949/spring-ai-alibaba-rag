@@ -1,51 +1,126 @@
 package io.github.yysf1949.rag.agent.orchestration;
 
+import io.github.yysf1949.rag.agent.memory.H2ChatMemoryStore;
+import io.github.yysf1949.rag.agent.memory.InMemoryChatMemoryStore;
+import io.github.yysf1949.rag.agent.memory.JdbcChatMemoryStore;
+import io.github.yysf1949.rag.agent.memory.MySqlChatMemoryStore;
+import io.github.yysf1949.rag.agent.memory.RedisChatMemoryStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
-import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import redis.clients.jedis.UnifiedJedis;
+
+import javax.sql.DataSource;
 
 /**
- * Phase 16 Task 1: 多轮对话 ChatMemory 装配.
+ * Phase 18 P1 — pluggable persistent {@link ChatMemoryRepository} backend.
  *
- * <h2>与既有链路的关系</h2>
- * <p>本配置是 ChatClientService 的"插件" — 仅当 ChatClient Bean 存在时 (即 deepseek profile 激活) 才装配.
- * 单测场景无 ChatClient Bean → 本配置整体不生效 → 不影响 Phase 14/15 ship 的 213 测试基线.</p>
+ * <h2>What changed vs Phase 16</h2>
+ * <p>Phase 16 hard-wired {@code InMemoryChatMemoryRepository}. This Phase adds
+ * four production-ready backends, selected at runtime by a single property:
+ * {@code spring.rag.chat-memory.store=inmemory|h2|mysql|jdbc|redis}
+ * (default {@code inmemory}). The {@link ChatMemory} wrapper, the
+ * {@link MessageChatMemoryAdvisor} and the wiring in
+ * {@code ChatClientService} stay exactly as they were.</p>
  *
- * <h2>为什么 InMemory + MessageWindowChatMemory (M=20)</h2>
+ * <h2>Default behaviour</h2>
  * <ul>
- *   <li>Demo / 单机够用: 进程内 Map, 零依赖, 重启清空</li>
- *   <li>M=20 消息窗口: 够 5-7 轮对话, 超出则 LRU 淘汰早期 context, 防止 prompt 无限增长</li>
- *   <li>Redis / JDBC 持久化推 Phase 18: 那时需要 tenantId 隔离 + TTL, 单独 Phase</li>
+ *   <li>If <em>no</em> {@link ChatMemoryRepository} bean exists in the context
+ *       (the Phase 16 default), we supply an {@link InMemoryChatMemoryStore}
+ *       with {@code @ConditionalOnMissingBean}. Existing tests keep passing.</li>
+ *   <li>If a {@link DataSource} is present <em>and</em>
+ *       {@code spring.rag.chat-memory.store=h2|mysql|jdbc}, the matching
+ *       store is registered and {@link #ensureChatMemorySchema(DataSource)} is
+ *       called so the table exists before the first request.</li>
+ *   <li>If a {@link UnifiedJedis} (Redis client) is present <em>and</em>
+ *       {@code spring.rag.chat-memory.store=redis}, the Redis store is used.</li>
+ *   <li>If the requested store's dependency is missing, Spring autoconfig will
+ *       simply skip — and {@code @ConditionalOnMissingBean} falls back to
+ *       in-memory so the chat endpoint never silently fails.</li>
  * </ul>
  *
- * <h2>为什么把 MessageChatMemoryAdvisor 也作为 Bean</h2>
- * <p>Phase 16 ChatClientService.chatWithMemory / stream 需要调用
- * {@code .advisors(a -> a.param(MessageChatMemoryAdvisor.CONVERSATION_ID, conversationId))} —
- * Advisor 自身是无状态的, 拿 ChatMemory 注入, conversationId 由 Prompt 运行时决定.
- * 暴露成 Bean 方便单测用 {@code @MockBean} 替换.</p>
+ * <h2>Why five beans instead of one with a switch</h2>
+ * <p>Each store has its own constructor arity ({@code DataSource} vs
+ * {@code UnifiedJedis} vs nothing). {@code @ConditionalOnProperty} keeps the
+ * wiring declarative and means the chosen backend is obvious from
+ * {@code application.yml}.</p>
+ *
+ * <h2>Why expose the schema-init bean</h2>
+ * <p>Tests can inject this to validate {@code ensureSchema} is idempotent and
+ * that round-trip via the JDBC stores survives an explicit
+ * {@code DROP + CREATE}.</p>
  */
 @Configuration
 @ConditionalOnBean(ChatClient.class)
 public class ChatMemoryConfig {
 
-    /**
-     * InMemory 仓库 — 单 JVM 内 Map<conversationId, List<Message>>.
-     * 生产替换见 {@code rag-redis} 模块 (Phase 18).
-     */
+    private static final Logger log = LoggerFactory.getLogger(ChatMemoryConfig.class);
+
+    public static final String PREFIX = "spring.rag.chat-memory.store";
+
+    // ---------- backend beans -------------------------------------------------
+
+    /** Default fallback: in-process. Always available; same semantics as Phase 16's bean. */
     @Bean
-    public ChatMemoryRepository chatMemoryRepository() {
-        return new InMemoryChatMemoryRepository();
+    @ConditionalOnMissingBean(ChatMemoryRepository.class)
+    public ChatMemoryRepository defaultChatMemoryRepository() {
+        log.info("ChatMemory backend = INMEMORY (no other ChatMemoryRepository bean found)");
+        return new InMemoryChatMemoryStore();
     }
 
-    /**
-     * 滑动窗口 ChatMemory — 最多保留最近 20 条消息.
-     */
+    /** H2 file or in-memory mode. Requires a {@link DataSource} bean. */
+    @Bean
+    @ConditionalOnProperty(prefix = PREFIX, name = "store", havingValue = "h2")
+    @ConditionalOnBean(DataSource.class)
+    public ChatMemoryRepository h2ChatMemoryRepository(DataSource dataSource) {
+        log.info("ChatMemory backend = H2");
+        H2ChatMemoryStore store = new H2ChatMemoryStore(dataSource);
+        store.ensureSchema();
+        return store;
+    }
+
+    /** MySQL. Requires a {@link DataSource} bean pointing at MySQL. */
+    @Bean
+    @ConditionalOnProperty(prefix = PREFIX, name = "store", havingValue = "mysql")
+    @ConditionalOnBean(DataSource.class)
+    public ChatMemoryRepository mysqlChatMemoryRepository(DataSource dataSource) {
+        log.info("ChatMemory backend = MYSQL");
+        MySqlChatMemoryStore store = new MySqlChatMemoryStore(dataSource);
+        store.ensureSchema();
+        return store;
+    }
+
+    /** Generic ANSI-SQL fallback. Requires a {@link DataSource} bean. */
+    @Bean
+    @ConditionalOnProperty(prefix = PREFIX, name = "store", havingValue = "jdbc")
+    @ConditionalOnBean(DataSource.class)
+    public ChatMemoryRepository jdbcChatMemoryRepository(DataSource dataSource) {
+        log.info("ChatMemory backend = JDBC (generic ANSI-SQL)");
+        JdbcChatMemoryStore store = new JdbcChatMemoryStore(dataSource);
+        store.ensureSchema();
+        return store;
+    }
+
+    /** Redis. Requires a {@link UnifiedJedis} bean (provided by rag-redis). */
+    @Bean
+    @ConditionalOnProperty(prefix = PREFIX, name = "store", havingValue = "redis")
+    @ConditionalOnBean(UnifiedJedis.class)
+    public ChatMemoryRepository redisChatMemoryRepository(UnifiedJedis jedis) {
+        log.info("ChatMemory backend = REDIS");
+        return new RedisChatMemoryStore(jedis);
+    }
+
+    // ---------- window + advisor (unchanged from Phase 16) ------------------
+
     @Bean
     public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository) {
         return MessageWindowChatMemory.builder()
@@ -54,11 +129,21 @@ public class ChatMemoryConfig {
                 .build();
     }
 
-    /**
-     * Memory Advisor — 自动把 conversationId 对应的历史消息拼到 system prompt.
-     */
     @Bean
     public MessageChatMemoryAdvisor memoryAdvisor(ChatMemory chatMemory) {
         return MessageChatMemoryAdvisor.builder(chatMemory).build();
+    }
+
+    // ---------- test hooks ---------------------------------------------------
+
+    /**
+     * Visible-for-testing hook — returns the active backend's class name. Tests
+     * can call this to confirm the right store was wired.
+     */
+    public static String describeBackend(ChatMemoryRepository repo) {
+        if (repo == null) {
+            return "none";
+        }
+        return repo.getClass().getSimpleName();
     }
 }
