@@ -14,7 +14,10 @@ class RefundToolTest {
     @BeforeEach
     void setUp() {
         repo = new InMemoryRefundRepository();
-        tool = new RefundTool(repo);
+        // Phase 13b M5: RefundTool 现在依赖 RefundRuleTool — 测试用一个空规则（无限制）的实例
+        var channel = new PaymentChannelTool();
+        var ruleTool = new RefundRuleTool(channel);
+        tool = new RefundTool(repo, ruleTool);
     }
 
     @Test

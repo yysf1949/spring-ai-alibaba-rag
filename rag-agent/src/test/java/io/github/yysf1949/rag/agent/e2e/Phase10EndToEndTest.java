@@ -73,7 +73,9 @@ class Phase10EndToEndTest {
                     OrderTool.class, InMemoryOrderRepository.class,
                     RefundTool.class, InMemoryRefundRepository.class,
                     CouponTool.class, InMemoryCouponRepository.class,
-                    LogisticsTool.class);
+                    LogisticsTool.class,
+                    // Phase 13b M5: RefundTool 现在依赖 PaymentChannelTool + RefundRuleTool
+                    PaymentChannelTool.class, RefundRuleTool.class);
             ctx.refresh();
 
             ToolRegistry registry = ctx.getBean(InMemoryToolRegistry.class);

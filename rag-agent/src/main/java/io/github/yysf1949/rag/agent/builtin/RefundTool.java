@@ -3,6 +3,7 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.RefundRepositoryPort;
+import io.github.yysf1949.rag.agent.exception.HandoffRequiredException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -13,6 +14,11 @@ import org.springframework.stereotype.Component;
  *   <li>{@code create_refund} — L3_BUSINESS_STATE（写业务态，单笔 ≤ 500 元不需转人工）</li>
  *   <li>{@code approve_refund} — L4_HIGH_RISK（直接打款，admin 角色强制）</li>
  * </ul>
+ *
+ * <h2>Phase 13b M5: 业务规则前置校验</h2>
+ * <p>{@code create_refund} 在写 Repo 前必须先调 {@link RefundRuleTool#checkRefundRules}，
+ * 命中"组合优惠 / 退款期 / 支付渠道"任一规则 → 抛 {@link HandoffRequiredException}，
+ * 由 {@code DefaultAgentLoop} 捕获并自动转人工（带完整 matchedRules + riskNote）。</p>
  */
 @Component
 public class RefundTool {
@@ -21,9 +27,11 @@ public class RefundTool {
     public static final long CREATE_MAX_AMOUNT_CENTS = 500_00L;
 
     private final RefundRepositoryPort repo;
+    private final RefundRuleTool ruleTool;
 
-    public RefundTool(RefundRepositoryPort repo) {
+    public RefundTool(RefundRepositoryPort repo, RefundRuleTool ruleTool) {
         this.repo = repo;
+        this.ruleTool = ruleTool;
     }
 
     @ToolSpec(
@@ -39,6 +47,17 @@ public class RefundTool {
         if (req.amountCents() > CREATE_MAX_AMOUNT_CENTS) {
             throw new io.github.yysf1949.rag.agent.exception.AmountLimitExceededException(
                     "create_refund", req.amountCents(), CREATE_MAX_AMOUNT_CENTS);
+        }
+        // Phase 13b M5: 业务规则前置 — 退款期 / 组合优惠 / 支付渠道
+        RefundRuleTool.RefundRuleResult rule = ruleTool.checkRefundRules(
+                new RefundRuleTool.CheckRefundRulesRequest(req.orderId()));
+        if (rule.requiresManual()) {
+            throw new HandoffRequiredException(
+                    "create_refund",
+                    rule.reason(),
+                    rule.matchedRules(),
+                    "Order [" + req.orderId() + "] hits business rule " + rule.reason()
+                            + "; refund requires manual review per company policy.");
         }
         var refund = new RefundRepositoryPort.RefundRecord(
                 RefundRepositoryPort.newRefundId(),

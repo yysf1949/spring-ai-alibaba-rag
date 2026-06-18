@@ -1,5 +1,6 @@
 package io.github.yysf1949.rag.agent.web;
 
+import io.github.yysf1949.rag.agent.exception.HandoffRequiredException;
 import io.github.yysf1949.rag.agent.exception.IdempotencyConflictException;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
@@ -44,5 +45,13 @@ public class AgentExceptionHandler {
     public ProblemDetail handleTenantRateLimited(TenantRateLimitedException e) {
         // Phase 13a M3: 租户级 QPS 超限 → 429 Too Many Requests
         return ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+    }
+
+    @ExceptionHandler(HandoffRequiredException.class)
+    public ProblemDetail handleHandoffRequired(HandoffRequiredException e) {
+        // Phase 13b M6: 业务规则命中"必须人工" → 422 Unprocessable Entity
+        // 注：通常 DefaultAgentLoop 已 catch 并转为 HANDOFF_REQUIRED outcome（不进这里）；
+        // 此映射兜底"直接调用 Tool / 测试场景"或 future HttpChannelAdapter 跳过编排层的边缘 case
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
     }
 }

@@ -62,4 +62,32 @@ public record HandoffContext(
                 toolChain,
                 String.join(" -> ", toolChain));
     }
+
+    /**
+     * Phase 13b M6: 业务规则命中"必须人工" — 工具调用前 RefundRuleTool 已完成匹配。
+     *
+     * <p>对齐「路条编程」文章 §"人工确认不是失败"原话："Agent 在转人工之前，
+     * 已完成用户身份确认、订单信息查询、问题分类、规则匹配和风险说明"。</p>
+     *
+     * @param identity     用户身份
+     * @param toolName     触发的工具
+     * @param reason       首个原因（如 "combo_coupon_requires_manual"）
+     * @param matchedRules 命中的所有规则 ID 列表
+     * @param riskNote     风险说明（人工审核要点）
+     * @param toolChain    已执行的工具链
+     */
+    public static HandoffContext forBusinessRule(
+            AgentIdentity identity, String toolName, String reason,
+            java.util.List<String> matchedRules, String riskNote, List<String> toolChain) {
+        return new HandoffContext(
+                identity, toolName,
+                HandoffReason.BUSINESS_RULE_MANDATES_HUMAN,
+                HandoffChannel.WORK_ORDER,
+                String.format("Tool [%s] hit business rule [%s]. Manual review required.", toolName, reason),
+                "BUSINESS_RULE_VIOLATION",
+                matchedRules,
+                riskNote,
+                toolChain,
+                String.join(" -> ", toolChain));
+    }
 }

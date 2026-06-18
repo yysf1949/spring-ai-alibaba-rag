@@ -261,4 +261,33 @@ Multi-region:
 
 **全仓库测试**：148 → **174**，0 fail（计划 +18，实际 +26：ToolAuditBridge 多 2 个集成测试，IdempotencyKeyGenerator 多 1 个 UUID fallback，TenantRateLimiter 多 1 个 defaultQps，TraceContext 多 1 个 thread-isolated，M1 多 1 个 nested/array 用例）
 
-**下一阶段**：Phase 13b（M5 PayChannelRule + M6 自动转人工）/ Phase 14（多渠道 Adapter）选一
+- **下一阶段**: Phase 13b（M5 PayChannelRule + M6 自动转人工）/ Phase 14（多渠道 Adapter）选一
+
+## Phase 13b — 业务规则 + 自动转人工（2026-06-18）
+
+**2 件套**，对齐「路条编程」AI 客服文章 §"不能绕过原业务规则" + §"人工确认不是失败"：
+
+| 模块 | 文件 | 职责 |
+|---|---|---|
+| **M5** PaymentChannelTool | `builtin/PaymentChannelTool.java` | L1 查询订单支付渠道（WECHAT/ALIPAY/CARD/VIRTUAL_CARD/POINTS）+ 是否允许退款（mock 决策表） |
+| **M5** RefundRuleTool | `builtin/RefundRuleTool.java` | L1 退款规则判定（退款期 7 天 / 组合优惠 / 渠道不允许退款）→ 命中抛 `HandoffRequiredException` |
+| **M5** RefundTool 集成 | `builtin/RefundTool.java` | `createRefund` 前置调 `RefundRuleTool.checkRefundRules`，命中 `requiresManual=true` → 抛 `HandoffRequiredException`（不写 Repo） |
+| **M6** HandoffRequiredException | `exception/HandoffRequiredException.java` | 业务规则 marker exception，携带 matchedRules + riskNote（文章"前置工作证据"原话） |
+| **M6** HandoffContext.forBusinessRule | `handoff/HandoffContext.java` | 新增工厂方法 — 用 `BUSINESS_RULE_MANDATES_HUMAN` reason + `WORK_ORDER` channel 打包 handoff |
+| **M6** DefaultAgentLoop 自动转人工 | `orchestration/DefaultAgentLoop.java` | 反射调用 catch `HandoffRequiredException` → 自动走 handoff 分流，context 含完整规则匹配证据 |
+
+**关键决策**：
+- `RefundTool.createRefund` 调 `RefundRuleTool` 前置 — 命中规则时**不写 Repo**，避免业务规则被旁路
+- `HandoffRequiredException` 用 `InvocationTargetException.unwrap()` (Phase 13b M6 的隐藏坑) — 否则 `Method.invoke` 把业务异常包成 `InvocationTargetException`，编排层 catch 抓不到
+- `PaymentChannelTool` + `RefundRuleTool` 不动 `OrderRepositoryPort`（保持 Phase 11 既有契约）；用内部 mock 决策表
+- 旧测试 `RefundToolTest` + `Phase10EndToEndTest` 注入 `PaymentChannelTool` + `RefundRuleTool` 实例（surgical — 改测试不动生产 API）
+- `AgentExceptionHandler` 加 `HandoffRequiredException → 422` 兜底（DefaultAgentLoop 通常会先 catch 转为 HANDOFF_REQUIRED outcome）
+
+**集成点**：
+- `RefundTool.createRefund(req)` → `ruleTool.checkRefundRules(req.orderId)` → 命中抛 `HandoffRequiredException`
+- `DefaultAgentLoop.doExecute` step 4 反射 try/catch → catch `HandoffRequiredException` → 调 `handoffService.handoff(forBusinessRule(...))` → 返回 `AgentResponse{outcome=HANDOFF_REQUIRED, handoffContext=...}`
+- `DefaultAgentLoop.invokeWithInjection` 加 `InvocationTargetException.unwrap` — 让 `HandoffRequiredException` 等 RuntimeException 正常向上传播
+
+**全仓库测试**：174 → **189**，0 fail（计划 +10，实际 +15：PaymentChannelTool 3 + RefundRuleTool 5 + RefundTool 集成 4 + DefaultAgentLoop 3）
+
+**下一阶段**：Phase 14（多渠道 Adapter — Feishu/Telegram/WeChat）/ Phase 15（E2E 真实 LLM 对话）选一

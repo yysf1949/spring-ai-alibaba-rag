@@ -10,6 +10,7 @@ import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.api.AgentService;
 import io.github.yysf1949.rag.agent.exception.AmountLimitExceededException;
+import io.github.yysf1949.rag.agent.exception.HandoffRequiredException;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
 import io.github.yysf1949.rag.agent.governance.AgentMetrics;
@@ -41,6 +42,17 @@ import java.util.List;
  *   <li>普通 DENIED 返回 DENIED + 审计</li>
  *   <li>幂等回放 REPLAY + {@link AgentMetrics#recordIdempotencyReplay}</li>
  *   <li>反射异常 FAILURE + {@link AgentMetrics#recordErrorExecution}</li>
+ * </ul>
+ *
+ * <h2>Phase 13a 升级</h2>
+ * <ul>
+ *   <li>租户级 QPS 限流（{@link TenantRateLimiter}）防单租户霸占后端</li>
+ * </ul>
+ *
+ * <h2>Phase 13b M6 升级</h2>
+ * <ul>
+ *   <li>{@link HandoffRequiredException}（业务规则命中）→ 自动走 handoff 分流，
+ *       Context 含完整 matchedRules + riskNote（文章"前置工作证据"原话）</li>
  * </ul>
  */
 @Component
@@ -168,8 +180,24 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
                 }
             }
 
-            // 4. 反射执行
-            result = invokeWithInjection(desc, request);
+            // 4. 反射执行 — 业务规则命中也走 handoff（Phase 13b M6）
+            try {
+                result = invokeWithInjection(desc, request);
+            } catch (HandoffRequiredException e) {
+                List<String> toolChain = List.of(request.toolName());
+                HandoffContext hctx = HandoffContext.forBusinessRule(
+                        request.identity(), e.toolName(), e.reason(),
+                        e.matchedRules(), e.riskNote(), toolChain);
+                handoffService.handoff(hctx);
+                handoffPayload = new AgentResponse.HandoffContextPayload(
+                        hctx.reason().name(), hctx.channel().name(),
+                        hctx.summary(), hctx.toolChainJson());
+                outcome = AgentOutcome.HANDOFF_REQUIRED;
+                long latency = System.currentTimeMillis() - start;
+                metrics.recordToolInvocation(request.toolName(), outcome, latency);
+                return new AgentResponse(request.toolName(), outcome, null,
+                        "已转人工处理: 业务规则 [" + e.reason() + "] 命中", latency, handoffPayload);
+            }
             String responseJson = safeToJson(result);
 
             // 5. 写回幂等结果
@@ -217,7 +245,20 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
                 }
             }
         }
-        return m.invoke(desc.bean(), args.toArray());
+        try {
+            return m.invoke(desc.bean(), args.toArray());
+        } catch (java.lang.reflect.InvocationTargetException ite) {
+            // Phase 13b M6: unwrap — 让 HandoffRequiredException 等业务异常正常向上抛,
+            // 不要被 InvocationTargetException 吞掉,否则编排层 catch 抓不到。
+            Throwable cause = ite.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            if (cause instanceof Exception e) {
+                throw e;
+            }
+            throw new RuntimeException(cause);
+        }
     }
 
     private Long extractAmountCents(ToolDescriptor desc, AgentRequest request) {
