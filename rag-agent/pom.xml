@@ -63,6 +63,14 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Phase 10: Redis 持久化幂等 (生产环境, 重启不丢键) -->
+        <dependency>
+            <groupId>io.github.yysf1949.rag</groupId>
+            <artifactId>rag-redis</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
