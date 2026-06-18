@@ -55,6 +55,19 @@ public class KbSearchTool {
         this.retrievalPort = Objects.requireNonNull(retrievalPort, "retrievalPort");
     }
 
+    /**
+     * Phase 17 — LLM 调 kb_search 时的入参 record (Plan §2.3)。
+     *
+     * <h2>字段说明</h2>
+     * <ul>
+     *   <li>{@code tenantId} — 必填, 多租户硬墙 (LLM 从 ctx 注入)</li>
+     *   <li>{@code kbId} — 必填, 知识库 ID</li>
+     *   <li>{@code kbVersion} — 必填, -1 = 用最新版本 (tool 内部转 0)</li>
+     *   <li>{@code query} — 必填, 原始查询文本</li>
+     *   <li>{@code topK} — 选填, 默认 5, 范围 [1, 20]</li>
+     *   <li>{@code userPermissionTags} — 选填, 默认 [], Phase 18 推 ctx → tag 注入</li>
+     * </ul>
+     */
     public record Request(
             String tenantId,
             String kbId,
@@ -116,8 +129,9 @@ public class KbSearchTool {
 
     @ToolSpec(
             name = "kb_search",
-            description = "在租户知识库中检索相关文档片段并返回结构化结果 (id/text/score/metadata)。"
-                    + "纯读操作，不修改任何业务数据；适合回答用户关于产品/政策/规则的提问。"
+            description = "在租户知识库中检索相关文档片段, 返回结构化结果 (id/text/score/metadata)。"
+                    + "纯读操作, 不修改业务数据; 适合回答用户关于产品/政策/规则的提问。"
+                    + "调用时传 tenantId/kbId/query/topK/userPermissionTags (kbVersion=-1 表最新)。"
                     + "返回 chunks 由 LLM 自行合成 grounded 答案。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true)
