@@ -3,7 +3,6 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
-import io.github.yysf1949.rag.agent.builtin.store.InMemoryOrderRepository;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
@@ -26,9 +25,9 @@ public class OrderTool {
     /** 取消订单单笔金额上限（分）— 100 元 */
     public static final long CANCEL_MAX_AMOUNT_CENTS = 100_00L;
 
-    private final InMemoryOrderRepository repo;
+    private final OrderRepositoryPort repo;
 
-    public OrderTool(InMemoryOrderRepository repo) {
+    public OrderTool(OrderRepositoryPort repo) {
         this.repo = repo;
     }
 

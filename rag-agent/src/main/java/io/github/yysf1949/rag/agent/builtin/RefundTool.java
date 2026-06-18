@@ -3,7 +3,6 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.RefundRepositoryPort;
-import io.github.yysf1949.rag.agent.builtin.store.InMemoryRefundRepository;
 import org.springframework.stereotype.Component;
 
 /**
@@ -21,9 +20,9 @@ public class RefundTool {
     /** 创建退款单笔金额上限（分）— 500 元 */
     public static final long CREATE_MAX_AMOUNT_CENTS = 500_00L;
 
-    private final InMemoryRefundRepository repo;
+    private final RefundRepositoryPort repo;
 
-    public RefundTool(InMemoryRefundRepository repo) {
+    public RefundTool(RefundRepositoryPort repo) {
         this.repo = repo;
     }
 

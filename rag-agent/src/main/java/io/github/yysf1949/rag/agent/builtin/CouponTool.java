@@ -3,7 +3,6 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.CouponRepositoryPort;
-import io.github.yysf1949.rag.agent.builtin.store.InMemoryCouponRepository;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -17,9 +16,9 @@ public class CouponTool {
     /** 单张优惠券金额上限（分）— 200 元 */
     public static final long ISSUE_MAX_AMOUNT_CENTS = 200_00L;
 
-    private final InMemoryCouponRepository repo;
+    private final CouponRepositoryPort repo;
 
-    public CouponTool(InMemoryCouponRepository repo) {
+    public CouponTool(CouponRepositoryPort repo) {
         this.repo = repo;
     }
 

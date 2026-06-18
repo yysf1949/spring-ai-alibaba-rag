@@ -3,7 +3,6 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.TicketRepositoryPort;
-import io.github.yysf1949.rag.agent.builtin.store.InMemoryTicketRepository;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
@@ -26,10 +25,10 @@ import java.util.UUID;
 @Component
 public class TicketTool {
 
-    private final InMemoryTicketRepository repository;
+    private final TicketRepositoryPort repository;
     private final IdempotencyStore idempotencyStore;
 
-    public TicketTool(InMemoryTicketRepository repository, IdempotencyStore idempotencyStore) {
+    public TicketTool(TicketRepositoryPort repository, IdempotencyStore idempotencyStore) {
         this.repository = repository;
         this.idempotencyStore = idempotencyStore;
     }
@@ -49,16 +48,6 @@ public class TicketTool {
     public record Response(
             String ticketId,
             String status
-    ) { }
-
-    public record Ticket(
-            String ticketId,
-            String tenantId,
-            String userId,
-            String sourceTool,
-            String description,
-            String status,
-            long createdAt
     ) { }
 
     @ToolSpec(
