@@ -105,7 +105,19 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
             } else if (p == IdempotencyKey.class) {
                 args.add(request.idempotencyKey());
             } else {
-                args.add(request.requestPayload());
+                // request.requestPayload() 通常是 Jackson 反序列化出来的 Map/List —
+                // 需要重新映射到工具方法声明的具体 DTO 类型，否则反射调用会抛
+                // "argument type mismatch"。策略：JSON round-trip 一次。
+                Object payload = request.requestPayload();
+                if (payload == null) {
+                    throw new IllegalArgumentException("Tool [" + desc.name() + "] request payload is null");
+                }
+                if (p.isInstance(payload)) {
+                    args.add(payload);
+                } else {
+                    String json = objectMapper.writeValueAsString(payload);
+                    args.add(objectMapper.readValue(json, p));
+                }
             }
         }
         return m.invoke(desc.bean(), args.toArray());
