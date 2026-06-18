@@ -855,3 +855,87 @@ spring:
 - Phase 18 P0 之后: kb_search 工具在真 LLM 链路上能 grounded 回答, 但 chat history 仍是进程内 Map (重启清空)
 - Phase 18 P1 之后: chat history 默认 InMemory (Phase 16 行为); 切 `spring.rag.chat-memory.store=h2|mysql|jdbc|redis` 拿跨重启持久化; 真 E2E 验证多轮对话 + 跨 "JVM 重启" 持久化全成立 (Turn 1 "42" → Turn 2 答 "42" → drop JVM 重开 store → 仍能读出 ≥4 消息)
 - P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; 远端 MATCH
+
+---
+
+## Phase 18 P2 — KB 版本管理 API (port + 4 store + tool + controller) (2026-06-18)
+
+### 业务背景
+
+Phase 7-9 ship 后, rag-pipeline 的 `VectorStore` 只接 `kb_id`, 每次 publish 写覆盖索引 (`publishPointer` 单 pointer 切到新版本). 用户不能:
+1. 列出该 KB 下历史 publish 过哪些版本
+2. 显式 rollback 到历史版本
+3. 知道当前 active version 是哪个
+4. 通过 tool/controller 调用
+
+Phase 18 P2 解决 1+2+3+4: 抽出 `KbVersionService` port, 4 backend 实现, Tool + Controller, 不动 Phase 7-9 ship 的 `VectorStore`.
+
+### 设计决策
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 范围 (E1) | 整 KB 粒度版本 (不是文档粒度) | spec §20 phase 18 P2 要求 + 简化实现; 文档粒度可推 Phase 19 |
+| versionId (F1) | long 自增 (时间戳 + seq) | 跨 backend 唯一单调; 不用 UUID 因为人读不出顺序 |
+| publish 模式 (G1) | 显式 publish (不自动) | Phase 7-9 ship 后已有自动 publish 流程; 但用户要 rollback 必须有显式 publish |
+| 状态模型 (H1) | 1 active + N historical | 满足"rollback 到上一个版本" + "列出历史" |
+| Port 位置 | rag-core | 跟 VectorStore / EmbeddingGateway 同 module; tool/controller 通过 Spring 拿 |
+| Store 实现分布 | H2/MySQL/Jdbc → rag-pipeline; Redis → rag-redis | 按 backend 所在模块 (用户偏好: 不放杂) |
+| Store 实现方式 | JdbcKbVersionService abstract base 抽公共 | H2/MySQL 只重写 DDL; SQL 操作 public |
+| Redis 数据结构 | hash `rag:kb-version-meta:{tenant}:{kb}:{version}` + 复用 `publishPointerKey` + ZSET versions | meta 详情查 hash; active 走 publishPointer; 列表查 ZSET |
+| 跨 backend upsert | SELECT-then-INSERT/UPDATE | 不用方言-specific MERGE/ON CONFLICT; 跨 H2/MySQL/PG/SQL Server 都 portable |
+| KbSearchTool 行为 | 永远传 `kbVersion=-1` | 让 RetrievalAdapter 在 cross-cutting 层解析; tool 自己不查版本 |
+| RetrievalAdapter 兼容 | 新增 nullable `KbVersionService` ctor; 旧 2-arg 保留 | 向后兼容 Phase 17 ship 的所有 caller |
+| kbVersion 解析 | `<0` → 调 `resolveVersion`; `>=0` → 透传 | 不解析显式版本 (用户给了具体值就该尊重) |
+
+### 已 ship (T2.1 → T2.6, HEAD `a990dec`)
+
+| T# | 内容 | 行数 / 文件 |
+|---|---|---|
+| T2.1 | `rag-core/port/KbVersionService.java` + `model/KbVersionMeta.java` + `exception/KbVersionNotFoundException.java` | +150 行 / 3 文件 |
+| T2.2 | `JdbcKbVersionService` (abstract base) + `H2KbVersionService` + `MySqlKbVersionService` (rag-pipeline) + `RedisKbVersionService` (rag-redis) | +650 行 / 4 文件 |
+| T2.3 | `RetrievalAdapter` 注入 `KbVersionService` (nullable); `search()` 解析 `kbVersion<0` | +60 行 / 1 文件 |
+| T2.4 | `KbVersionTool` (L2_WRITE, 4 actions: LIST/SWITCH/PUBLISH/GET_ACTIVE) + Request/Response/Action record | +260 行 / 4 文件 |
+| T2.5 | `KbVersionController` REST: `GET /api/kb/versions`, `POST /switch`, `POST /publish` | +150 行 / 1 文件 |
+| T2.6 | 测试: H2 14 + Redis 17 + tool 10 + controller 5 + adapter E2E 4 = **50 新测试** | +1100 行 / 6 文件 |
+| **总计** | | **+2370 行 / 19 文件, 2 commit** |
+
+### REST API
+
+| 方法 | 路径 | Body | 返回 |
+|---|---|---|---|
+| GET | `/api/kb/versions?tenantId=&kbId=` | - | `KbVersionListResponse` (versions[], activeVersion) |
+| POST | `/api/kb/versions/switch` | `{tenantId, kbId, versionId}` | `KbVersionResponse` (success, message, activeVersion) |
+| POST | `/api/kb/versions/publish` | `{tenantId, kbId, versionId, sourceLabel?}` | `KbVersionResponse` (success, message, activeVersion) |
+
+### Tool API (供 Agent 调用)
+
+```java
+kb_version_tool(action="LIST", tenantId="t1", kbId="kb-product")
+kb_version_tool(action="PUBLISH", tenantId="t1", kbId="kb-product", versionId=1749999999001L, sourceLabel="docs-v2.zip")
+kb_version_tool(action="SWITCH", tenantId="t1", kbId="kb-product", versionId=1749999998001L)  // rollback
+kb_version_tool(action="GET_ACTIVE", tenantId="t1", kbId="kb-product")
+```
+
+### 关键坑 (后续 Phase 必看)
+
+1. **`git add -A` 是陷阱** — 误把 `.env.example` / `openjdk-21-jdk.deb` (670KB) / phase plan MD 都进 commit. 修复: `git reset --soft HEAD~1 && rm <bad> && git reset HEAD` + 重 commit. **永远明确 add 文件名, 不用 `-A`**.
+2. **`UnifiedJedis.hset` 多态** — 5.2.0 接受 `Map<String,String>` 或 `(String, String, String)` 单字段; 多字段用 `Map` 形式, 单字段用 3-arg form. `setStatus` 用 3-arg, `publish/ensureMetaExists` 用 Map.
+3. **abstract JdbcKbVersionService 不要持有 datasource** — 子类 H2/MySQL 在 ctor 自己拿; parent 只暴露 hook `protected abstract String upsertSql()`.
+4. **KbVersionNotFoundException 不要 500** — agent 调 `GET_ACTIVE` 而 KB 没 active 版本应该返 200 + 空 activeVersion, 不是 500 (用户体验: LLM 自己会处理"无 active").
+5. **真 DeepSeek E2E vs adapter E2E 边界** — version 解析路径涉及 LLM 调用的是 controller E2E (用 `@MockBean RetrievalAdapter`); 跨 backend 实际 SQL/Redis 是 H2/Redis service 单元测试. 真 LLM E2E 仍只有 chat-memory 那 1 个 (P1 写).
+
+### 测试基线 (P2 末)
+
+| 模块 | 测试数 | 增量 (P1 → P2) |
+|---|---|---|
+| rag-core | 18 | - |
+| rag-pipeline | **176** | +18 (H2 service 14 + adapter E2E 4) |
+| rag-redis | **175** | +17 (Redis mock) |
+| rag-agent | **287** | +15 (tool 10 + controller 5) |
+| **总计** | **656** | **+50 新, 0 fail, 0 skip** |
+
+### P2 → Phase 19 增量
+
+- Phase 18 P2 之后: Agent 能查 / 切 / 发布 KB 版本; backend (H2/MySQL/Redis) 全部就位; controller REST 暴露给 curl / 前端.
+- Phase 19 待做: 文档粒度版本 (E2) + partial re-index + 真 LLM E2E 走 controller E2E (P2 ship 时用 @MockBean 跳过).
+- P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; P2 ship: HEAD `a990dec`; 远端 MATCH.
