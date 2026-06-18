@@ -13,7 +13,7 @@
 **Tech Stack:**
 - Spring Boot 3.3.5（与 rag-core 一致）
 - Java 21（项目基线）
-- Spring AI 1.0.9（**保持不升级**，仅使用 `FunctionCallingCallback` + `FunctionCallback` 接口，**预留 ToolDescriptor 抽象层**以兼容未来 2.0 `@Tool`）
+- Spring AI 1.0.9（**保持不升级**，仅使用 `FunctionToolCallback` 接口 — 实际类路径 `org.springframework.ai.tool.function.FunctionToolCallback`，**预留 ToolDescriptor 抽象层**以兼容未来 2.0 `@Tool`）
 - Maven 多 module（新增 `rag-agent` 子模块，依赖 `rag-core` + `rag-pipeline`，可选 `rag-redis`）
 - Resilience4j 2.2.0（治理层用 `@Retry`/`@RateLimiter`）
 - Micrometer 1.14.x（治理层指标发布）
@@ -166,10 +166,14 @@ spring-ai-alibaba-rag/
             <version>${project.version}</version>
         </dependency>
 
-        <!-- 编排层需要 Spring AI 1.0.9 的 FunctionCallingCallback 接口 -->
+        <!-- 编排层需要 Spring AI 1.0.9 的 FunctionToolCallback 接口。
+             注：Spring AI 1.0.9 BOM 中没有 spring-ai-core（0.x 时代的 artifact），
+             1.0.9 把 core 拆为 spring-ai-commons / spring-ai-model / spring-ai-client-chat 等。
+             FunctionToolCallback / FunctionCallback 相关类位于 spring-ai-model jar 下。
+             实测类路径: org.springframework.ai.tool.function.FunctionToolCallback -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-core</artifactId>
+            <artifactId>spring-ai-model</artifactId>
         </dependency>
 
         <!-- Spring 上下文（编排层用 Bean 注入；治理层用 @ConditionalOnProperty） -->
@@ -2075,7 +2079,7 @@ import io.github.yysf1949.rag.agent.action.ToolDescriptor;
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.model.function.FunctionCallback;
+import org.springframework.ai.tool.function.FunctionToolCallback;
 
 import java.lang.reflect.Method;
 
@@ -2403,16 +2407,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.yysf1949.rag.agent.action.ToolDescriptor;
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
-import org.springframework.ai.model.function.FunctionCallback;
-import org.springframework.ai.model.function.FunctionCallbackWrapper;
+import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.stereotype.Component;
 
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Spring AI 1.0.9 适配器 — 把 {@code ToolDescriptor} 翻译成
- * {@code FunctionCallback} 数组，供 Spring AI 1.0.9 的 ChatClient 调用。
+ * {@code FunctionToolCallback} 数组，供 Spring AI 1.0.9 的 ChatClient 调用。
+ *
+ * <h2>1.0.9 vs 2.0 API 差异</h2>
+ * <ul>
+ *   <li>1.0.9: {@code FunctionToolCallback.builder(name, Function<I,O>).description(...).inputType(...).build()}</li>
+ *   <li>2.0: {@code FunctionCallbackWrapper.builder(fn).withName(...).withDescription(...).build()}</li>
+ * </ul>
  *
  * <h2>升级路径</h2>
  * <p>Spring AI 2.0 起 {@code @Tool} 注解成为主流 — 本类届时改为
@@ -2430,19 +2440,22 @@ public class SpringAiAgentAdapter {
     }
 
     /**
-     * 把所有已注册 Tool 翻译成 Spring AI 1.0.9 的 {@code FunctionCallback}。
+     * 把所有已注册 Tool 翻译成 Spring AI 1.0.9 的 {@code FunctionToolCallback}。
      */
-    public FunctionCallback[] getFunctionCallbacks() {
-        List<FunctionCallback> out = new ArrayList<>();
+    public FunctionToolCallback[] getFunctionCallbacks() {
+        List<FunctionToolCallback> out = new ArrayList<>();
         for (String name : registry.listNames()) {
             ToolDescriptor desc = registry.get(name);
-            out.add(FunctionCallbackWrapper.builder(
-                    new SpringAiFunctionImpl(desc, objectMapper))
-                    .withName(desc.name())
-                    .withDescription(desc.description())
-                    .build());
+            // SpringAiFunctionImpl 把 JSON 字符串反序列化成工具方法的入参 DTO，再 invoke
+            SpringAiFunctionImpl fn = new SpringAiFunctionImpl(desc, objectMapper);
+            Type inputType = desc.method().getGenericParameterTypes()[0];
+            FunctionToolCallback<?, ?> cb = FunctionToolCallback.builder(name, fn)
+                    .description(desc.description())
+                    .inputType(inputType)
+                    .build();
+            out.add(cb);
         }
-        return out.toArray(new FunctionCallback[0]);
+        return out.toArray(new FunctionToolCallback[0]);
     }
 
     /**
