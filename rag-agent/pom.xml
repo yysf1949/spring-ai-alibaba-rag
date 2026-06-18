@@ -63,7 +63,37 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- 测试 -->
+        <!-- HTTP 接入层 (Task 8) — provided 因为 rag-agent 设计为可在 rag-app 内复用 +
+             单独部署,容器依赖按需注入。provided 模式让 rag-app 启动时自带 Web,但
+             rag-agent 单测可以用 @WebMvcTest 拉起来。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!--
+             Swagger/OpenAPI 注解 (@Tag / @Operation) 用在 AgentController 上。
+             必须显式声明 compile(非 provided)否则 rag-agent 单独编译失败 —
+             springdoc 不在 spring-boot-starter-web BOM 中。
+             rag-app 用 2.6.0,这里保持一致。
+         -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>2.6.0</version>
+        </dependency>
+
+        <!-- 测试 — spring-boot-starter-test 是 @WebMvcTest / @MockBean / MockMvc 的 umbrella -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
