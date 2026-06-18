@@ -28,6 +28,7 @@ public record ToolDescriptor(
         boolean idempotent,
         boolean requiresIdempotencyKey,
         Long maxAmountCents,
+        boolean requiresConfirmationToken,
         Object bean,
         Method method
 ) {

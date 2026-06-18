@@ -24,6 +24,12 @@ public class DefaultRiskGate implements RiskGate {
 
     private static final Set<String> ADMIN_ROLES = Set.of("admin", "system");
 
+    private final ConfirmationService confirmationService;
+
+    public DefaultRiskGate(ConfirmationService confirmationService) {
+        this.confirmationService = confirmationService;
+    }
+
     @Override
     public void check(ToolDescriptor descriptor, AgentIdentity identity,
                       IdempotencyKey idemKey, Long requestedAmountCents) {
@@ -61,6 +67,25 @@ public class DefaultRiskGate implements RiskGate {
                 && requestedAmountCents > descriptor.maxAmountCents()) {
             throw new AmountLimitExceededException(
                     descriptor.name(), requestedAmountCents, descriptor.maxAmountCents());
+        }
+
+        // Phase 21: 确认令牌校验 — requiresConfirmationToken=true 的 L3 工具需要有效 token
+        if (descriptor.requiresConfirmationToken()) {
+            // ConfirmationToken 通过 identity 的 confirmationToken 字段传入
+            // 这里检查是否存在有效的待消费 token
+            String tokenRaw = identity.confirmationToken();
+            if (tokenRaw == null || tokenRaw.isBlank()) {
+                throw new ToolRiskDeniedException(String.format(
+                        "Tool [%s] requires a confirmationToken; user must explicitly confirm before execution",
+                        descriptor.name()));
+            }
+            ConfirmationToken token = confirmationService.validateAndConsume(
+                    tokenRaw, descriptor.name(), identity.userId());
+            if (token == null) {
+                throw new ToolRiskDeniedException(String.format(
+                        "Tool [%s] confirmationToken is invalid, expired, or already consumed",
+                        descriptor.name()));
+            }
         }
     }
 }

@@ -147,7 +147,7 @@ class DocumentVersionRollbackE2ETest {
                         + "纯读操作, 不修改业务数据; 适合回答用户关于产品/政策/规则的提问。"
                         + "调用时传 tenantId/kbId/query/topK/userPermissionTags (kbVersion=-1 表最新)。"
                         + "返回 chunks 由 LLM 自行合成 grounded 答案。",
-                RiskLevel.L1_READ, true, false, null,
+                RiskLevel.L1_READ, true, false, null, false,
                 new KbSearchTool(port), m));
 
         StageAwareToolAuthorizer authorizer = new StageAwareToolAuthorizer(registry);

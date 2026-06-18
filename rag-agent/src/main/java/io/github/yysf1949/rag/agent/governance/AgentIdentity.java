@@ -13,17 +13,29 @@ import java.util.Set;
  *
  * <p>对齐本项目设计原则 §6 租户硬墙：{@code tenantId} 永不跨用户。</p>
  *
- * @param tenantId   租户 ID（永不跨用户）
- * @param userId     终端用户 ID
- * @param sessionId  会话 ID（用于幂等键拼接）
- * @param roles      角色列表（用于风险门控 / RBAC）
+ * @param tenantId           租户 ID（永不跨用户）
+ * @param userId             终端用户 ID
+ * @param sessionId          会话 ID（用于幂等键拼接）
+ * @param roles              角色列表（用于风险门控 / RBAC）
+ * @param confirmationToken  确认令牌（Phase 21: 高风险写操作前用户确认的令牌）
  */
 public record AgentIdentity(
         String tenantId,
         String userId,
         String sessionId,
-        Set<String> roles
+        Set<String> roles,
+        String confirmationToken
 ) {
+
+    /** 便捷构造器 — 不带确认令牌 */
+    public AgentIdentity(String tenantId, String userId, String sessionId, Set<String> roles) {
+        this(tenantId, userId, sessionId, roles, null);
+    }
+
+    /** 带确认令牌的构造器 */
+    public AgentIdentity withConfirmationToken(String token) {
+        return new AgentIdentity(tenantId, userId, sessionId, roles, token);
+    }
 
     public AgentIdentity {
         if (tenantId == null || tenantId.isBlank()) {

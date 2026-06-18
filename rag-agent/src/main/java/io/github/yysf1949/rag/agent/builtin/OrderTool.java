@@ -5,14 +5,16 @@ import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Set;
 
 /**
- * 订单工具 — L1 查询 + L3 取消。
+ * 订单工具 — L1 查询 + L1 列表 + L3 取消。
  *
  * <h2>4 级风险对照</h2>
  * <ul>
  *   <li>{@code get_order} — L1_READ（只读，参数含 amountCents 仅作展示）</li>
+ *   <li>{@code list_orders} — L1_READ（只读，查用户订单列表）</li>
  *   <li>{@code cancel_order} — L3_BUSINESS_STATE（写业务态，单笔 ≤ 100 元不需转人工）</li>
  * </ul>
  *
@@ -46,6 +48,22 @@ public class OrderTool {
     }
 
     @ToolSpec(
+            name = "list_orders",
+            description = "查询用户的订单列表（只读）。适用于：用户说'我最近的订单'、'查一下我的订单'。"
+                    + "返回订单列表（订单号、金额、状态），用户可据此选择具体订单。",
+            riskLevel = RiskLevel.L1_READ,
+            idempotent = true,
+            requiresIdempotencyKey = false
+    )
+    public ListOrdersResponse listOrders(ListOrdersRequest req) {
+        var orders = repo.findByUser(req.tenantId(), req.userId());
+        var briefs = orders.stream()
+                .map(o -> new OrderBrief(o.orderId(), o.status(), o.amountCents()))
+                .toList();
+        return new ListOrdersResponse(briefs, briefs.size());
+    }
+
+    @ToolSpec(
             name = "cancel_order",
             description = "取消订单（未发货可取消，超过 100 元需转人工审批）。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
@@ -73,6 +91,9 @@ public class OrderTool {
 
     public record GetOrderRequest(String tenantId, String userId, String orderId) { }
     public record GetOrderResponse(String orderId, String status, long amountCents, String userId) { }
+    public record ListOrdersRequest(String tenantId, String userId) { }
+    public record OrderBrief(String orderId, String status, long amountCents) { }
+    public record ListOrdersResponse(List<OrderBrief> orders, int total) { }
     public record CancelOrderRequest(String tenantId, String userId, String orderId,
                                      long amountCents, String reason) { }
     public record CancelOrderResponse(String orderId, String status, String reason) { }

@@ -194,7 +194,7 @@ class ChatClientServiceMultiTurnMockTest {
     private static ToolDescriptor mockTool(String name, RiskLevel risk) {
         try {
             Method m = FakeDtoBean.class.getMethod("run", FakeDtoBean.In.class);
-            return new ToolDescriptor(name, name + "_desc", risk, true, false, null,
+            return new ToolDescriptor(name, name + "_desc", risk, true, false, null, false,
                     new FakeDtoBean(), m);
         } catch (NoSuchMethodException e) {
             throw new RuntimeException(e);

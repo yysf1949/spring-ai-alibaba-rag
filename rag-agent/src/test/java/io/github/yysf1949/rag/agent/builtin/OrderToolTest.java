@@ -36,7 +36,7 @@ class OrderToolTest {
                 tool.getOrder(new OrderTool.GetOrderRequest(
                         "tenant-2", "user-1", "ORD-1")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("tenant-2");
+                .hasMessageContaining("ORD-1");
     }
 
     @Test

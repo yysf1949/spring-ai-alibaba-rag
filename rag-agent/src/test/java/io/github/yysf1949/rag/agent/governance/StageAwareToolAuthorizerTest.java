@@ -120,7 +120,7 @@ class StageAwareToolAuthorizerTest {
     /** mock 工具 descriptor — 简化版 (生产有完整 ToolDescriptor 构造) */
     private static ToolDescriptor mock(String name, RiskLevel risk, boolean idempotent,
                                        boolean requiresKey, Long maxAmount) {
-        return new ToolDescriptor(name, name + "_desc", risk, idempotent, requiresKey, maxAmount,
+        return new ToolDescriptor(name, name + "_desc", risk, idempotent, requiresKey, maxAmount, false,
                 new Object(), dummyMethod());
     }
 

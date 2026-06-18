@@ -90,7 +90,7 @@ class SpringAiAgentAdapterDynamicAuthTest {
         try {
             // 1-arg 业务 DTO 方法 (FunctionToolCallback builder 要求 inputType 存在)
             Method m = FakeDtoBean.class.getMethod("run", FakeDtoBean.In.class);
-            return new ToolDescriptor(name, name + "_desc", risk, true, false, null,
+            return new ToolDescriptor(name, name + "_desc", risk, true, false, null, false,
                     new FakeDtoBean(), m);
         } catch (NoSuchMethodException e) {
             throw new RuntimeException(e);

@@ -1143,3 +1143,122 @@ T3: DocumentVersionControllerTest (7 tests, standalone MockMvc)
 - Phase 19 之后: 文档级 rollback 工作; 真 LLM E2E 验证 active 切换影响 LLM 答案; 文档级跟 KB 级完全解耦.
 - Phase 20 之后: partial re-index 只重建一个 doc 的 chunks, 保留其他 doc; DocumentVersionService + KbVersionService 从 mock 迁移到真 Redis live 测试; REST controller 层有独立集成测试; 真 LLM E2E 仍走 Phase 19 的 tool 层 (controller 层测试不依赖 LLM).
 - P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; P2 ship: HEAD `a990dec`; P19 ship: HEAD `6dd7700`; **P20 ship: HEAD `1e2d231`**; 远端 MATCH.
+
+---
+
+## Phase 21: 业务工具扩充 + 确认令牌机制 (2026-06-19)
+
+**灵感来源**: 微信公众号文章《Salesforce 收购 AI 客服平台 Fin 背景下的 Java 后端机遇分析》
+
+> AI 客服正从"聊天机器人"升级为可直接处理业务的"客户服务 Agent"。
+> 真正决定其落地的关键，不再仅仅是大模型能力，而是企业后端系统能否为 Agent 提供安全、稳定、可执行、可审计的业务能力。
+
+### T1-T5: 5 个新业务工具
+
+```
+T1: UserIdentityTool (L1_READ)
+  query_user_info — 查用户身份/会员等级/积分/收货地址
+  对齐文章"查询用户身份"
+
+T2: RefundStatusTool (L1_READ + L2_REVERSIBLE)
+  query_refund — 查退款状态 (L1)
+  cancel_refund — 取消 PENDING 退款 (L2, 幂等)
+  补齐退款闭环: create → approve → query → cancel
+
+T3: InventoryTool (L1_READ)
+  check_stock — 查商品库存/在售状态/价格/品类
+  对齐文章"后端能力" — 换货/补发的前置条件
+
+T4: ComplaintTool (L3_BUSINESS_STATE)
+  create_complaint — 创建投诉工单 (分类: 服务/质量/物流/其他)
+  P0 紧急投诉自动转人工, P1-P3 正常受理
+  独立于 TicketTool 的投诉通道
+
+T5: OrderTool 增强 (L1_READ)
+  list_orders — 查用户订单列表
+  对齐文章"先 list 再 get" 的标准分流
+```
+
+### T6: ConfirmationToken 确认令牌机制
+
+**对齐文章核心观点**: "创建退款 — 只有用户已经明确确认，并且提供有效确认令牌时才能调用。"
+
+```
+ConfirmationToken (record)
+  - rawToken: "CONF-{uuid12}"
+  - toolName: 绑定的工具名 (防跨工具重放)
+  - userId: 绑定的用户 (防跨用户重放)
+  - expiresAt: 5 分钟过期
+  - 一次性使用 (验证后自动失效)
+
+ConfirmationService (@Component)
+  - generate(toolName, userId) → ConfirmationToken
+  - validateAndConsume(rawToken, toolName, userId) → token or null
+  - cleanup() → 移除过期 token
+
+RiskGate 集成:
+  ToolDescriptor.requiresConfirmationToken = true 时,
+  DefaultRiskGate.check() 校验 AgentIdentity.confirmationToken 有效且未消费
+
+RefundTool.create_refund 现在 requiresConfirmationToken = true
+```
+
+### 测试
+
+```
+AllNewToolsTest (14 tests)
+  UserIdentityTool: 2 tests (found / not-found)
+  RefundStatusTool: 5 tests (query found/not-found, cancel PENDING/APPROVED/missing)
+  InventoryTool: 2 tests (found / not-found)
+  ComplaintTool: 3 tests (P2 create, P0 escalate, idempotency)
+  OrderTool listOrders: 2 tests (with orders / empty)
+
+ConfirmationServiceTest (9 tests)
+  generate / validate+consume / wrong tool / wrong user / null / nonexistent / cleanup / matches / identity.withConfirmationToken
+
+Total new tests: 23
+```
+
+### 测试基线 (P21 末)
+
+| 模块 | 测试数 | 增量 (P20 → P21) |
+|---|---|---|
+| rag-core | 18 | - |
+| rag-pipeline | **200** | - |
+| rag-redis | **91** (23 skip) | - |
+| rag-agent | **328** | **+23** (14 tools + 9 confirm) |
+| **总计** | **~700** | **+23 新, 0 fail** |
+
+### 工具全景 (P21 末, 20 个工具)
+
+| 类别 | 工具 | 风险级 | 说明 |
+|---|---|---|---|
+| **用户** | query_user_info | L1 | 身份/会员/地址 |
+| **订单** | get_order / list_orders | L1 | 查询 |
+| | cancel_order | L3 | 取消 (≤100元) |
+| **物流** | query_logistics | L1 | 轨迹查询 |
+| **退款** | check_refund_eligibility | L1 | 资格判断 |
+| | calculate_refund_amount | L1 | 金额计算 |
+| | query_refund | L1 | 状态查询 |
+| | create_refund | L3+确认 | 创建申请 (≤500元) |
+| | approve_refund | L4 | 审批 (admin) |
+| | cancel_refund | L2 | 取消 PENDING |
+| **优惠** | list_active_coupons | L1 | 查询 |
+| | issue_coupon | L3 | 补发 (≤200元) |
+| | query_product_promotions | L1 | 促销查询 |
+| **价保** | check_price_protection | L1 | 资格判断 |
+| | apply_price_protection | L3 | 申请 (≤200元) |
+| **库存** | check_stock | L1 | 商品库存 |
+| **工单** | create_reminder_ticket | L2 | 提醒工单 |
+| | create_complaint | L3 | 投诉工单 |
+| **通知** | send_notification | L2 | 站内通知 |
+| **支付** | query_payment_channel | L1 | 渠道查询 |
+| **会员** | get_member_benefits | L1 | 等级/积分/特权 |
+| **知识库** | kb_search | L1 | RAG 检索 |
+| | kb_version / doc_version | L2 | 版本管理 |
+
+### P19 → Phase 20 → Phase 21 增量
+
+- P20: partial re-index + live Redis tests + controller E2E (基础设施层)
+- P21: 业务工具扩充 (文章驱动) — 从 15 个工具 → 20 个工具; 新增确认令牌机制; 全部工具对齐文章 4 级风险分级
+- 关键设计决策: ConfirmationToken 通过 AgentIdentity 透传, RiskGate 统一校验, 不侵入工具实现

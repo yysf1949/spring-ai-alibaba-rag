@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Optional;
 
 @Component
@@ -36,5 +37,11 @@ public class H2OrderRepository implements OrderRepositoryPort {
     public Optional<OrderRecord> findByIdAndTenant(String orderId, String tenantId) {
         return jdbc.query("SELECT * FROM agent_order WHERE order_id = ? AND tenant_id = ?",
                 MAPPER, orderId, tenantId).stream().findFirst();
+    }
+
+    @Override
+    public List<OrderRecord> findByUser(String tenantId, String userId) {
+        return jdbc.query("SELECT * FROM agent_order WHERE tenant_id = ? AND user_id = ?",
+                MAPPER, tenantId, userId);
     }
 }

@@ -17,6 +17,7 @@ import io.github.yysf1949.rag.agent.builtin.store.InMemoryTicketRepository;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
 import io.github.yysf1949.rag.agent.governance.AgentMetrics;
+import io.github.yysf1949.rag.agent.governance.ConfirmationService;
 import io.github.yysf1949.rag.agent.governance.DefaultRiskGate;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
@@ -114,7 +115,7 @@ class DefaultAgentLoopTest {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             ctx.registerBean(io.github.yysf1949.rag.core.port.RetrievalPort.class, () -> port);
             ctx.register(KbSearchTool.class, TicketTool.class, InMemoryTicketRepository.class,
-                    InMemoryIdempotencyStore.class, DefaultRiskGate.class,
+                    InMemoryIdempotencyStore.class, ConfirmationService.class, DefaultRiskGate.class,
                     io.github.yysf1949.rag.agent.action.InMemoryToolRegistry.class);
             ctx.refresh();
             registry = ctx.getBean(io.github.yysf1949.rag.agent.action.InMemoryToolRegistry.class);
@@ -134,6 +135,7 @@ class DefaultAgentLoopTest {
                     spec.name(), spec.description(), spec.riskLevel(),
                     spec.idempotent(), spec.requiresIdempotencyKey(),
                     spec.maxAmountCents() >= 0 ? spec.maxAmountCents() : null,
+                    spec.requiresConfirmationToken(),
                     testTools, m);
             map.put(spec.name(), desc);
         }
@@ -145,7 +147,7 @@ class DefaultAgentLoopTest {
             }
         });
         IdempotencyStore idem = new InMemoryIdempotencyStore();
-        RiskGate gate = new DefaultRiskGate();
+        RiskGate gate = new DefaultRiskGate(new ConfirmationService());
         meterRegistry = new SimpleMeterRegistry();
         AgentMetrics agentMetrics = new AgentMetrics(meterRegistry);
         HumanReviewQueue reviewQueue = new HumanReviewQueue();

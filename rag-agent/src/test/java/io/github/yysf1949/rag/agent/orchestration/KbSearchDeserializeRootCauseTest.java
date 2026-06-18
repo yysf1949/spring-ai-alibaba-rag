@@ -63,7 +63,7 @@ class KbSearchDeserializeRootCauseTest {
         Map<String, ToolDescriptor> map = (Map<String, ToolDescriptor>) f.get(registry);
         Method m = KbSearchTool.class.getMethod("search", KbSearchRequest.class);
         map.put("kb_search", new ToolDescriptor(
-                "kb_search", "知识库检索", RiskLevel.L1_READ, true, false, null,
+                "kb_search", "知识库检索", RiskLevel.L1_READ, true, false, null, false,
                 new KbSearchTool(port), m));
 
         StageAwareToolAuthorizer authorizer = new StageAwareToolAuthorizer(registry);

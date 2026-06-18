@@ -52,8 +52,14 @@ import static org.mockito.Mockito.when;
  * </ol>
  */
 class Phase10EndToEndTest {
+    private AgentIdentity withConfirmationToken(AgentIdentity id, String toolName) {
+        var token = confirmationService.generate(toolName, id.userId());
+        return id.withConfirmationToken(token.rawToken());
+    }
+
 
     private DefaultAgentLoop loop;
+    private ConfirmationService confirmationService;
     private InMemoryOrderRepository orderRepo;
     private InMemoryRefundRepository refundRepo;
 
@@ -72,7 +78,7 @@ class Phase10EndToEndTest {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             ctx.registerBean(io.github.yysf1949.rag.core.port.RetrievalPort.class, () -> port);
             ctx.register(KbSearchTool.class, TicketTool.class, InMemoryTicketRepository.class,
-                    InMemoryIdempotencyStore.class, DefaultRiskGate.class,
+                    InMemoryIdempotencyStore.class, ConfirmationService.class, DefaultRiskGate.class,
                     InMemoryToolRegistry.class,
                     OrderTool.class, InMemoryOrderRepository.class,
                     RefundTool.class, InMemoryRefundRepository.class,
@@ -93,7 +99,8 @@ class Phase10EndToEndTest {
             LlmAuditHook hook = (t, u, s, q, m, pt, pb, c, l, o) -> auditOutcomes.add(o);
             ToolAuditBridge bridge = new ToolAuditBridge(hook);
             IdempotencyStore idem = ctx.getBean(InMemoryIdempotencyStore.class);
-            RiskGate gate = new DefaultRiskGate();
+            confirmationService = new ConfirmationService();
+            RiskGate gate = new DefaultRiskGate(confirmationService);
             AgentMetrics metrics = new AgentMetrics(new SimpleMeterRegistry());
             HandoffService handoffService = new HandoffService(new HumanReviewQueue(), metrics);
             ObjectMapper objectMapper = new ObjectMapper();
@@ -150,7 +157,7 @@ class Phase10EndToEndTest {
     @Test
     void l4ApproveRefundWithoutAdminTriggersHandoff() {
         // 先创建退款
-        var createReq = AgentRequest.of(identity("t1", "user-1", Set.of("user")), "create_refund",
+        var createReq = AgentRequest.of(withConfirmationToken(identity("t1", "user-1", Set.of("user")), "create_refund"), "create_refund",
                 new RefundTool.CreateRefundRequest("t1", "user-1", "ORD-1", 50_00L, "ok"),
                 IdempotencyKey.of("t1", "user-1", "s1", "create_refund", "refund-create-1"));
         var created = loop.execute(createReq);
@@ -171,7 +178,7 @@ class Phase10EndToEndTest {
 
     @Test
     void l4ApproveRefundWithAdminSucceeds() {
-        var createReq = AgentRequest.of(identity("t1", "admin-1", Set.of("admin")), "create_refund",
+        var createReq = AgentRequest.of(withConfirmationToken(identity("t1", "admin-1", Set.of("admin")), "create_refund"), "create_refund",
                 new RefundTool.CreateRefundRequest("t1", "admin-1", "ORD-1", 50_00L, "ok"),
                 IdempotencyKey.of("t1", "admin-1", "s1", "create_refund", "refund-create-2"));
         var created = loop.execute(createReq);

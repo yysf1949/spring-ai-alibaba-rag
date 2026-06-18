@@ -81,7 +81,7 @@ class ChatClientServiceStreamE2ETest {
         Map<String, ToolDescriptor> map = (Map<String, ToolDescriptor>) f.get(registry);
         Method m = FakeDtoBean.class.getMethod("run", FakeDtoBean.In.class);
         map.put("get_order", new ToolDescriptor("get_order", "查询单个订单详情",
-                RiskLevel.L1_READ, true, false, null, new FakeDtoBean(), m));
+                RiskLevel.L1_READ, true, false, null, false, new FakeDtoBean(), m));
 
         StageAwareToolAuthorizer authorizer = new StageAwareToolAuthorizer(registry);
         SpringAiAgentAdapter adapter = new SpringAiAgentAdapter(registry, authorizer);

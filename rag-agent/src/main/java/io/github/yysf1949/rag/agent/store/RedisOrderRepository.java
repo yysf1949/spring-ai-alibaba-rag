@@ -4,6 +4,8 @@ import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 @Component
@@ -39,6 +41,27 @@ public class RedisOrderRepository implements OrderRepositoryPort {
             return Optional.of(factory.mapper().readValue(json, OrderRecord.class));
         } catch (Exception e) {
             throw new RuntimeException("Failed to find order", e);
+        }
+    }
+
+    @Override
+    public List<OrderRecord> findByUser(String tenantId, String userId) {
+        try {
+            List<OrderRecord> result = new ArrayList<>();
+            String pattern = factory.key("order", tenantId, "*");
+            var keys = factory.jedis().keys(pattern);
+            for (String key : keys) {
+                String json = factory.jedis().get(key);
+                if (json != null) {
+                    OrderRecord order = factory.mapper().readValue(json, OrderRecord.class);
+                    if (userId.equals(order.userId())) {
+                        result.add(order);
+                    }
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to find orders by user", e);
         }
     }
 }

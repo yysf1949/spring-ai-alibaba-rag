@@ -12,6 +12,7 @@ import io.github.yysf1949.rag.agent.builtin.TicketTool;
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryTicketRepository;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
 import io.github.yysf1949.rag.agent.governance.AgentMetrics;
+import io.github.yysf1949.rag.agent.governance.ConfirmationService;
 import io.github.yysf1949.rag.agent.governance.DefaultRiskGate;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
@@ -74,7 +75,7 @@ class AgentEndToEndTest {
         try (var ctx = new AnnotationConfigApplicationContext()) {
             ctx.registerBean(io.github.yysf1949.rag.core.port.RetrievalPort.class, () -> port);
             ctx.register(KbSearchTool.class, TicketTool.class, InMemoryTicketRepository.class,
-                    InMemoryIdempotencyStore.class, DefaultRiskGate.class,
+                    InMemoryIdempotencyStore.class, ConfirmationService.class, DefaultRiskGate.class,
                     InMemoryToolRegistry.class);
             ctx.refresh();
             ToolRegistry registry = ctx.getBean(InMemoryToolRegistry.class);
@@ -85,7 +86,7 @@ class AgentEndToEndTest {
             LlmAuditHook hook = (t, u, s, q, m, pt, pb, c, l, o) -> auditOutcomes.add(o);
             ToolAuditBridge bridge = new ToolAuditBridge(hook);
             IdempotencyStore idem = ctx.getBean(InMemoryIdempotencyStore.class);
-            RiskGate gate = new DefaultRiskGate();
+            RiskGate gate = new DefaultRiskGate(new ConfirmationService());
             AgentMetrics metrics = new AgentMetrics(new SimpleMeterRegistry());
             HandoffService handoffService = new HandoffService(new HumanReviewQueue(), metrics);
             ObjectMapper objectMapper = new ObjectMapper();

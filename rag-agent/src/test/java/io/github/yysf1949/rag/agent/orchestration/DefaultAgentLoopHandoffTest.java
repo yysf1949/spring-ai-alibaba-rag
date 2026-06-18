@@ -12,6 +12,7 @@ import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.exception.HandoffRequiredException;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
 import io.github.yysf1949.rag.agent.governance.AgentMetrics;
+import io.github.yysf1949.rag.agent.governance.ConfirmationService;
 import io.github.yysf1949.rag.agent.governance.DefaultRiskGate;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
@@ -78,13 +79,14 @@ class DefaultAgentLoopHandoffTest {
                 spec.name(), spec.description(), spec.riskLevel(),
                 spec.idempotent(), spec.requiresIdempotencyKey(),
                 spec.maxAmountCents() >= 0 ? spec.maxAmountCents() : null,
+                spec.requiresConfirmationToken(),
                 testTools, m);
         map.put(spec.name(), desc);
 
         LlmAuditHook hook = (t, u, s, q, mId, pt, pb, c, l, o) -> { };
         ToolAuditBridge bridge = new ToolAuditBridge(hook);
         var idem = new InMemoryIdempotencyStore();
-        RiskGate gate = new DefaultRiskGate();
+        RiskGate gate = new DefaultRiskGate(new ConfirmationService());
         var metrics = new AgentMetrics(new SimpleMeterRegistry());
         var reviewQueue = new HumanReviewQueue();
         HandoffService handoffService = new HandoffService(reviewQueue, metrics);

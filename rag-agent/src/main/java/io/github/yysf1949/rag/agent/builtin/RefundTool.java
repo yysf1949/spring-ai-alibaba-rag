@@ -40,7 +40,8 @@ public class RefundTool {
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = false,
             requiresIdempotencyKey = true,
-            maxAmountCents = 500_00L  // 500 元上限
+            maxAmountCents = 500_00L,  // 500 元上限
+            requiresConfirmationToken = true  // Phase 21: 文章要求"用户明确确认"
     )
     public CreateRefundResponse createRefund(CreateRefundRequest req) {
         // 金额门控 — RiskGate 也会检查，这里写一次保证直接调用时也走门控

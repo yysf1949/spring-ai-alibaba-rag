@@ -61,4 +61,10 @@ public @interface ToolSpec {
      * 缺省 -1 表示不限。
      */
     long maxAmountCents() default -1L;
+
+    /**
+     * 是否需要确认令牌（L3 写操作推荐 true）。
+     * 设为 true 时，RiskGate 会校验 ConfirmationToken 有效且未过期。
+     */
+    boolean requiresConfirmationToken() default false;
 }

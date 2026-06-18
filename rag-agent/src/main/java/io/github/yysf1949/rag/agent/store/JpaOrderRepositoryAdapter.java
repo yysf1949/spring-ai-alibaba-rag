@@ -5,6 +5,7 @@ import io.github.yysf1949.rag.agent.store.entity.OrderEntity;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Optional;
 
 @Component
@@ -27,5 +28,12 @@ public class JpaOrderRepositoryAdapter implements OrderRepositoryPort {
     public Optional<OrderRecord> findByIdAndTenant(String orderId, String tenantId) {
         return jpa.findByOrderIdAndTenantId(orderId, tenantId)
                 .map(OrderEntity::toRecord);
+    }
+
+    @Override
+    public List<OrderRecord> findByUser(String tenantId, String userId) {
+        return jpa.findByTenantIdAndUserId(tenantId, userId).stream()
+                .map(OrderEntity::toRecord)
+                .toList();
     }
 }
