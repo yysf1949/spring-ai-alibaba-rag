@@ -355,3 +355,30 @@ cat logs/audit.log | jq -c 'select(.tenantId=="tenant-refund")' | tail -20
 audit: {"timestamp":"...","type":"AGENT_TOOL_CALL","tenantId":"t1","actorId":"u1",
 "resourceId":"kb_search","outcome":"SUCCESS","fields":{"latencyMs":12,"queryHash":"..."}}
 ```
+
+---
+
+## 11. Agent 5 大指标 (Phase 10)
+
+### 11.1 指标列表
+
+| 指标 | 类型 | 标签 | 含义 |
+|---|---|---|---|
+| `agent.tool.invocations` | counter | tool, outcome | 端到端调用计数 |
+| `agent.tool.latency` | timer | tool | 端到端耗时分布 |
+| `agent.handoffs` | counter | tool, reason, channel | 转人工次数 |
+| `agent.idempotency.replays` | counter | tool | 幂等回放次数 |
+| `agent.tool.errors` | counter | tool, type | 系统错误（治理层/编排层异常） |
+
+### 11.2 暴露方式
+
+- Micrometer 1.14.x → Prometheus 0.16+
+- HTTP 端点：`/actuator/prometheus` (默认随 rag-app 启动)
+- 标签：tool (e.g. `kb_search`), outcome (`SUCCESS`/`FAILURE`/`DENIED`/`REPLAY`/`HANDOFF_REQUIRED`)
+
+### 11.3 Grafana 面板建议
+
+- 工具调用速率：`rate(agent_tool_invocations_total[5m])` 按 tool 分组
+- 错误率：`rate(agent_tool_errors_total[5m]) / rate(agent_tool_invocations_total[5m])`
+- 转人工频率：`rate(agent_handoffs_total[5m])` 按 reason 分组
+- 幂等回放比：`rate(agent_idempotency_replays_total[5m]) / rate(agent_tool_invocations_total[5m])`

@@ -360,3 +360,31 @@ requirement (spec §2.4 — 6 months).
 
 - 看 `rag.audit.errors.total` gauge
 - 检查 `AuditChannel` appender 配置（90 天 RollingFile）
+
+---
+
+## 12. Agent 转人工故障排查
+
+### 12.1 转人工队列积压
+
+- 查指标：`agent.handoffs` 增长率
+- 查队列：`GET /actuator/agent/handoffs?tenant=...` （Phase 11+ 实现）
+- 应急：手动从 HumanReviewQueue 取 item, 调 HandoffService.complete 标记
+
+### 12.2 工具被限流
+
+- 查指标：`agent.tool.errors{type=RequestNotPermitted}` 增长
+- 查配置：`application.yml` → `resilience4j.ratelimiter.configs.default.limit-for-period`
+- 调大或换工具
+
+### 12.3 幂等键丢失（Redis 故障）
+
+- 查日志：`RedisIdempotencyStore` 异常
+- 自动回退：可以临时把 `agent.idempotency.store=inmemory` 切回 (需要重启)
+- 长期：检查 Redis 连接池 + 哨兵配置
+
+### 12.4 LLM 调工具失败
+
+- 查指标：`agent.tool.errors` 增长率
+- 查日志：`ToolExecutionException` 跟 LLM 调用的关联
+- 应急：暂时关闭问题工具 (从 ToolRegistry exclude)

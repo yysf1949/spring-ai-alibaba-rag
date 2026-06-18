@@ -296,3 +296,43 @@ FT.searchParams()
 `ToolDescriptor` 抽象层，升级 2.0 `@Tool` 时只改 `SpringAiAgentAdapter` 一个文件。
 
 参考文章: 「路条编程」《Salesforce 36 亿美元押注 AI 客服》(2026-06-17)
+
+---
+
+## 10. Phase 10 — Agent Action Layer 升级
+
+### 10.1 扩展的 4 级风险
+
+Phase 9 建立了 4 级风险 enum + RiskGate 框架，Phase 10 真正落地：
+- **L1 (READ)** — `kb_search` / `get_order` / `query_logistics` / `list_active_coupons`
+- **L2 (REVERSIBLE)** — `create_reminder_ticket` (Phase 9 已有)
+- **L3 (BUSINESS_STATE)** — `cancel_order` (max 100 元) / `create_refund` (max 500 元) / `issue_coupon` (max 200 元)
+- **L4 (HIGH_RISK)** — `approve_refund` (admin 角色强制)
+
+### 10.2 人工转接机制
+
+对齐「路条编程」文章 §"人工确认不是失败"：
+- `HandoffService.handoff(ctx)` 触发 5 种原因之一（AMOUNT_LIMIT_EXCEEDED / INSUFFICIENT_PRIVILEGE / RETRY_EXHAUSTED / BUSINESS_RULE_MANDATES_HUMAN / USER_REQUESTED）
+- `HandoffContext` 打包 Agent 已完成的工作（用户身份 + 工具链 + 规则匹配 + 风险说明）
+- `HumanReviewQueue` 内存版队列（生产可换 Jira/自研工单）
+- 转接后返回 `AgentOutcome.HANDOFF_REQUIRED` + `handoffContext` 字段
+
+### 10.3 5 大评估指标
+
+对齐「路条编程」文章 §"评估指标要变"：
+- `agent.tool.invocations` (counter, tags: tool, outcome) — 端到端调用计数
+- `agent.tool.latency` (timer, tag: tool) — 耗时分布
+- `agent.handoffs` (counter, tags: tool, reason, channel) — 转人工次数
+- `agent.idempotency.replays` (counter, tag: tool) — 幂等回放次数
+- `agent.tool.errors` (counter, tags: tool, type) — 系统错误（跟业务 FAILURE 区分）
+
+### 10.4 多渠道接入层 (Phase 10 范围)
+
+- `ChannelAdapter` interface (统一封装入口)
+- `HttpChannelAdapter` — 现有 HTTP 入口复用
+- `WechatChannelAdapter` / `EmailChannelAdapter` / `AppChannelAdapter` 推迟到 Phase 11
+
+### 10.5 治理层加固
+
+- `RedisIdempotencyStore` — opt-in 持久化（替代 InMemory，30s TTL + replace 不延寿）
+- `AgentRateLimiter` — 工具级 Resilience4j @RateLimiter 包装（默认 100 QPS/工具）

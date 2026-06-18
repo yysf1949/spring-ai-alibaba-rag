@@ -193,3 +193,16 @@ Multi-region:
 - **核心**: 3 层架构（编排/动作/治理）+ 4 级工具风险分级
 - **参考**: 「路条编程」AI 客服文章 (2026-06-17)
 - **未做**: 真实 LLM 接入 + Spring AI 2.0 升级 + 多 Agent 协作
+
+---
+
+## Phase 10 — Agent Action Layer 升级 (2026-06-18)
+
+- **Status**: shipped
+- **Range**: P0 (L3/L4 业务工具 + 人工转接) + P1 (指标 + Redis 幂等 + 限流) + P2 (多渠道接口预留)
+- **关键决策**:
+  - 沿用 Phase 9 的 3 层架构，不重写
+  - 业务工具用内存 Repository mock (生产换真实 Service)
+  - 多渠道只预留 ChannelAdapter interface，Wechat/Email/App 推到 Phase 11
+  - IdempotencyStore 走 Redis 持久化（opt-in by `agent.idempotency.store=redis`）
+- **下一阶段**: Phase 11 — 多渠道接入实现 (微信客服) + 真实业务 Service 集成
