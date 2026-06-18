@@ -10,6 +10,15 @@ public interface IdempotencyStore {
 
     PutResult putIfAbsent(IdempotencyKey key, Object value);
 
+    /**
+     * 写回结果值（key 已存在时用真实结果覆盖之前的 null 占位）。
+     *
+     * <p>配合 {@link #putIfAbsent} 的典型用法：第一次 {@code putIfAbsent(key, null)}
+     * 占位拿到锁，业务完成后用 {@code replace(key, resultValue)} 把真实结果写回 —
+     * 第二次同 key 调用 {@code putIfAbsent} 触发 REPLAY 时能拿回这个值。</p>
+     */
+    void replace(IdempotencyKey key, Object value);
+
     /** putIfAbsent 返回值。 */
     record PutResult(OutcomeKind outcome, Object value) {
         public enum OutcomeKind { FIRST, REPLAY }
