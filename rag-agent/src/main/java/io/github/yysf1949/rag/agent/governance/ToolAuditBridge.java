@@ -28,6 +28,10 @@ import java.security.MessageDigest;
  *   <li>{@code completion} ← 响应 JSON + outcome 标签</li>
  *   <li>{@code outcome}   ← SUCCESS / FAILURE / DENIED</li>
  * </ul>
+ *
+ * <h2>Phase 13a 改造</h2>
+ * <p>{@link SensitiveDataMasker} 在写 audit 前对 requestJson / responseJson / promptBody
+ * 做脱敏（身份证 / 银行卡 / 手机号 / 邮箱 / 地址），让审计仍可追溯行为但不再含明文 PII。</p>
  */
 @Component
 public class ToolAuditBridge {
@@ -36,17 +40,28 @@ public class ToolAuditBridge {
     private static final String MODEL_PREFIX = "agent:";
 
     private final LlmAuditHook hook;
+    private final SensitiveDataMasker masker;
 
     public ToolAuditBridge(LlmAuditHook hook) {
+        this(hook, new SensitiveDataMasker());
+    }
+
+    public ToolAuditBridge(LlmAuditHook hook, SensitiveDataMasker masker) {
         this.hook = hook == null ? LlmAuditHook.NOOP : hook;
+        this.masker = masker == null ? new SensitiveDataMasker() : masker;
     }
 
     public void record(ToolInvocationContext ctx) {
         try {
-            String queryHash = sha256(ctx.requestJson() == null ? "" : ctx.requestJson());
+            String requestJson = ctx.requestJson() == null ? "" : ctx.requestJson();
+            String responseJson = ctx.responseJson() == null ? "" : ctx.responseJson();
+            String maskedRequest = masker.mask(requestJson);
+            String maskedResponse = masker.mask(responseJson);
+            String queryHash = sha256(maskedRequest);
             String modelId = MODEL_PREFIX + ctx.toolName();
-            String promptBody = "tool=" + ctx.toolName() + " request=" + ctx.requestJson();
-            String completion = ctx.responseJson() + " outcome=" + ctx.outcome();
+            String traceTag = TraceContext.current() == null ? "" : " traceId=" + TraceContext.current();
+            String promptBody = "tool=" + ctx.toolName() + " request=" + maskedRequest + traceTag;
+            String completion = maskedResponse + " outcome=" + ctx.outcome();
             hook.onLlmCall(
                     ctx.identity().tenantId(),
                     ctx.identity().userId(),

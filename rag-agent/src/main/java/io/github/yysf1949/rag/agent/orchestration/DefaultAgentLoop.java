@@ -16,6 +16,8 @@ import io.github.yysf1949.rag.agent.governance.AgentMetrics;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import io.github.yysf1949.rag.agent.governance.RiskGate;
+import io.github.yysf1949.rag.agent.governance.TenantRateLimitedException;
+import io.github.yysf1949.rag.agent.governance.TenantRateLimiter;
 import io.github.yysf1949.rag.agent.governance.ToolAuditBridge;
 import io.github.yysf1949.rag.agent.governance.ToolInvocationContext;
 import io.github.yysf1949.rag.agent.handoff.HandoffContext;
@@ -52,11 +54,16 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
     private final ToolAuditBridge auditBridge;
     private final AgentMetrics metrics;
     private final HandoffService handoffService;
+    private final TenantRateLimiter tenantRateLimiter;
     private final ObjectMapper objectMapper;
 
+    /**
+     * 完整构造 — 含租户级限流。
+     */
     public DefaultAgentLoop(ToolRegistry registry, RiskGate riskGate,
                             IdempotencyStore idemStore, ToolAuditBridge auditBridge,
                             AgentMetrics metrics, HandoffService handoffService,
+                            TenantRateLimiter tenantRateLimiter,
                             ObjectMapper objectMapper) {
         this.registry = registry;
         this.riskGate = riskGate;
@@ -64,12 +71,38 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
         this.auditBridge = auditBridge;
         this.metrics = metrics;
         this.handoffService = handoffService;
+        this.tenantRateLimiter = tenantRateLimiter == null
+                ? new TenantRateLimiter() : tenantRateLimiter;
         this.objectMapper = objectMapper;
+    }
+
+    /**
+     * 向后兼容构造 — 未注入 TenantRateLimiter 时,内部用默认实例（无租户隔离风险，因为单租户场景）。
+     */
+    public DefaultAgentLoop(ToolRegistry registry, RiskGate riskGate,
+                            IdempotencyStore idemStore, ToolAuditBridge auditBridge,
+                            AgentMetrics metrics, HandoffService handoffService,
+                            ObjectMapper objectMapper) {
+        this(registry, riskGate, idemStore, auditBridge, metrics, handoffService,
+                null, objectMapper);
     }
 
     @Override
     public AgentResponse execute(AgentRequest request) {
         long start = System.currentTimeMillis();
+        // Phase 13a: 租户级 QPS 限流 — 防单租户霸占后端
+        try {
+            return tenantRateLimiter.execute(request.identity().tenantId(), () -> doExecute(request, start));
+        } catch (TenantRateLimitedException e) {
+            log.warn("Tenant rate limited: {}", e.getMessage());
+            metrics.recordErrorExecution(request.toolName(), "TenantRateLimited");
+            long latency = System.currentTimeMillis() - start;
+            return new AgentResponse(request.toolName(), AgentOutcome.FAILURE, null,
+                    e.getMessage(), latency, null);
+        }
+    }
+
+    private AgentResponse doExecute(AgentRequest request, long start) {
         AgentOutcome outcome = AgentOutcome.FAILURE;
         Object result = null;
         AgentResponse.HandoffContextPayload handoffPayload = null;

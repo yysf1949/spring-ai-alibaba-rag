@@ -3,6 +3,7 @@ package io.github.yysf1949.rag.agent.web;
 import io.github.yysf1949.rag.agent.exception.IdempotencyConflictException;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
+import io.github.yysf1949.rag.agent.governance.TenantRateLimitedException;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -37,5 +38,11 @@ public class AgentExceptionHandler {
     @ExceptionHandler(IdempotencyConflictException.class)
     public ProblemDetail handleIdempotencyConflict(IdempotencyConflictException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
+    }
+
+    @ExceptionHandler(TenantRateLimitedException.class)
+    public ProblemDetail handleTenantRateLimited(TenantRateLimitedException e) {
+        // Phase 13a M3: 租户级 QPS 超限 → 429 Too Many Requests
+        return ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
     }
 }

@@ -37,4 +37,61 @@ class ToolAuditBridgeTest {
                 org.mockito.ArgumentMatchers.eq("SUCCESS"));
         assertThat(captor.getValue()).isNotBlank();
     }
+
+    @Test
+    void masksSensitiveDataInAudit() {
+        // Phase 13a M1: 身份证 / 手机号不应出现在 audit 中
+        LlmAuditHook hook = mock(LlmAuditHook.class);
+        var bridge = new ToolAuditBridge(hook);
+        var identity = new AgentIdentity("t1", "u1", "s1", Set.of("user"));
+        var ctx = new ToolInvocationContext(identity, "kb_search",
+                "{\"phone\":\"13812345678\"}",
+                "{\"result\":\"ok\"}", 10L, "SUCCESS");
+
+        bridge.record(ctx);
+
+        // promptBody = tool=... request=... — 不能含完整手机号
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(hook).onLlmCall(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                bodyCaptor.capture(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString());
+        assertThat(bodyCaptor.getValue()).contains("138****5678");
+        assertThat(bodyCaptor.getValue()).doesNotContain("13812345678");
+    }
+
+    @Test
+    void traceIdAppendedToPromptBodyWhenSet() {
+        // Phase 13a M4: 当 TraceContext 设置时, promptBody 末尾追加 traceId
+        LlmAuditHook hook = mock(LlmAuditHook.class);
+        var bridge = new ToolAuditBridge(hook);
+        var identity = new AgentIdentity("t1", "u1", "s1", Set.of("user"));
+        var ctx = new ToolInvocationContext(identity, "kb_search",
+                "{\"q\":\"hi\"}", "{}", 10L, "SUCCESS");
+
+        try (TraceContext.Scope s = TraceContext.enter("trace-abc-123")) {
+            bridge.record(ctx);
+        }
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(hook).onLlmCall(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                bodyCaptor.capture(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString());
+        assertThat(bodyCaptor.getValue()).contains("traceId=trace-abc-123");
+    }
 }

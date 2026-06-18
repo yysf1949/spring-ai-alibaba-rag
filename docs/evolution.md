@@ -234,3 +234,31 @@ Multi-region:
   - Redis via `RedisStoreFactory` + `JedisPooled` (沿用 Phase 7 基础设施)
   - Profile 切换: `h2`(dev) / `mysql`(prod) / `redis`(high-perf) / 空(单元测试/InMemory)
 - **下一阶段**: 待定
+
+## Phase 13a — AI 客服治理层补齐（2026-06-18）
+
+**4 件套**，对齐「路条编程」AI 客服文章治理层缺口：
+
+| 模块 | 文件 | 职责 |
+|---|---|---|
+| **M1** SensitiveDataMasker | `governance/SensitiveDataMasker.java` | audit 出口字段级 + 值级脱敏（身份证/银行卡/手机号/邮箱/地址） |
+| **M2** IdempotencyKeyGenerator | `governance/IdempotencyKeyGenerator.java` | 语义化幂等键工厂（`forCancelOrder` / `forCreateRefund` / `forApproveRefund` 等）— 包装现有 `IdempotencyKey` |
+| **M3** TenantRateLimiter | `governance/TenantRateLimiter.java` | 租户级 QPS 限流（防单租户霸占后端），超限抛 `TenantRateLimitedException` → 429 |
+| **M4** TraceIdFilter + TraceContext | `web/TraceIdFilter.java` + `governance/TraceContext.java` | HTTP `X-Agent-Trace-Id` header → ThreadLocal + MDC，audit/metrics 自动串联 |
+
+**集成点**：
+- `ToolAuditBridge` 写 audit 前调 `masker.mask(requestJson)` / `masker.mask(responseJson)`，并在 promptBody 追加 `traceId=xxx`
+- `AgentMetrics.recordToolInvocation` 当 `TraceContext.current() != null` 时附加 `traceId` tag（向后兼容旧 SimpleMeterRegistry 断言）
+- `DefaultAgentLoop.execute()` 入口走 `tenantRateLimiter.execute(tenantId, ...)`，限流触发时返回 FAILURE + 埋 `agent.tool.errors{type=TenantRateLimited}`
+- `AgentExceptionHandler` 新增 `TenantRateLimitedException → 429`
+- 兼容：旧 7-arg `DefaultAgentLoop` 构造保留（向后兼容单测）
+
+**关键决策**：
+- M2 不重写 `IdempotencyKey`，只追加语义化 wrapper — 底层 SHA-256 hash + 五元组拼接已在 Phase 10 验证
+- M3 默认 50 QPS / 租户，可通过 `setQps(tenantId, qps)` 单独配置；`execute` 内部用 `find().isPresent()` 判断走 replace 路径，避免 Resilience4j `replace` 静默失败的坑
+- M4 不用 `com.github.f4b6a3.uuid`（未在依赖里），回退 `UUID.randomUUID()`，生产可换 Snowflake
+- M1 mask 值级 fallback 用 `JsonProcessingException` catch 后对纯文本走正则（覆盖非 JSON 备注字段）
+
+**全仓库测试**：148 → **174**，0 fail（计划 +18，实际 +26：ToolAuditBridge 多 2 个集成测试，IdempotencyKeyGenerator 多 1 个 UUID fallback，TenantRateLimiter 多 1 个 defaultQps，TraceContext 多 1 个 thread-isolated，M1 多 1 个 nested/array 用例）
+
+**下一阶段**：Phase 13b（M5 PayChannelRule + M6 自动转人工）/ Phase 14（多渠道 Adapter）选一

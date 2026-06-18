@@ -34,14 +34,21 @@ public class AgentMetrics {
 
     /** 工具调用埋点（每次 invoke 调一次） */
     public void recordToolInvocation(String toolName, AgentOutcome outcome, long latencyMs) {
-        registry.counter("agent.tool.invocations",
-                "tool", toolName,
-                "outcome", outcome.name()).increment();
+        String traceId = TraceContext.current();
+        var counter = (traceId == null)
+                ? registry.counter("agent.tool.invocations",
+                        "tool", toolName, "outcome", outcome.name())
+                : registry.counter("agent.tool.invocations",
+                        "tool", toolName, "outcome", outcome.name(), "traceId", traceId);
+        counter.increment();
 
-        Timer timer = Timer.builder("agent.tool.latency")
+        Timer.Builder builder = Timer.builder("agent.tool.latency")
                 .description("Agent tool invocation latency")
-                .tag("tool", toolName)
-                .register(registry);
+                .tag("tool", toolName);
+        if (traceId != null) {
+            builder.tag("traceId", traceId);
+        }
+        Timer timer = builder.register(registry);
         timer.record(Duration.ofMillis(latencyMs));
     }
 
