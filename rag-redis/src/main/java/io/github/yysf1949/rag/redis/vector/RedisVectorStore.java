@@ -489,6 +489,52 @@ public class RedisVectorStore implements VectorStore {
         }
     }
 
+    // ─── deleteByDocumentId (Phase 20 — partial re-index) ────────────────
+
+    @Override
+    public int deleteByDocumentId(String tenantId, String kbId, String documentId, long kbVersion) {
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new IllegalArgumentException("tenantId must not be blank");
+        }
+        if (kbId == null || kbId.isBlank()) {
+            throw new IllegalArgumentException("kbId must not be blank");
+        }
+        if (documentId == null || documentId.isBlank()) {
+            throw new IllegalArgumentException("documentId must not be blank");
+        }
+        UnifiedJedis client = connection.client();
+        String alias = ACTIVE_ALIAS_PREFIX + tenantId + ":" + kbId;
+        try {
+            // Search for all chunks belonging to this specific document.
+            // documentId is a TAG field in the RediSearch schema.
+            String query = "@tenantId:{" + escapeTag(tenantId) + "}"
+                    + " @kbId:{" + escapeTag(kbId) + "}"
+                    + " @documentId:{" + escapeTag(documentId) + "}";
+            SearchResult res = client.ftSearch(alias, query,
+                    FTSearchParams.searchParams().dialect(2).limit(0, 10_000));
+            if (res == null || res.getDocuments() == null || res.getDocuments().isEmpty()) {
+                log.debug("deleteByDocumentId: no chunks found for tenant={} kb={} doc={}",
+                        tenantId, kbId, documentId);
+                return 0;
+            }
+            int deleted = 0;
+            for (Document doc : res.getDocuments()) {
+                // doc.getId() is the hash key "rag:chunk:{tenantId}:{chunkId}"
+                long removed = client.del(doc.getId());
+                deleted += (int) removed;
+            }
+            log.info("deleteByDocumentId: tenant={} kb={} doc={} → {} chunks deleted",
+                    tenantId, kbId, documentId, deleted);
+            return deleted;
+        } catch (VectorStoreUnavailableException ex) {
+            throw ex;
+        } catch (Exception e) {
+            throw new VectorStoreUnavailableException(
+                    "deleteByDocumentId failed for tenant=" + tenantId
+                            + " kb=" + kbId + " doc=" + documentId, e);
+        }
+    }
+
     // ─── helpers ───────────────────────────────────────────────────────────
 
     /** Escape RediSearch TAG field literal metacharacters.

@@ -61,4 +61,18 @@ public interface IngestService {
      * atomic index switch (spec §6.1) and updates the job status.
      */
     IngestJob publish(String jobId);
+
+    /**
+     * Partial re-index: re-ingest a single document without touching other
+     * documents in the same KB.
+     *
+     * <p>Phase 20 — re-split, re-embed, re-upsert only this document's
+     * chunks. Old chunks for the same documentId are deleted first, then
+     * new chunks are written and published atomically. Other documents'
+     * active versions remain untouched.</p>
+     *
+     * @param document the document to re-index (must carry kbId, documentId, tenantId)
+     * @return the final {@link IngestJob} (status PUBLISHED on success, FAILED on error)
+     */
+    IngestJob reindexDocument(Document document);
 }

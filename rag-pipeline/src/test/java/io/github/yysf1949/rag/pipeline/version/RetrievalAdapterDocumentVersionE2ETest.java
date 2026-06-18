@@ -331,6 +331,15 @@ class RetrievalAdapterDocumentVersionE2ETest {
                     && Long.parseLong(c.documentVersion()) == oldKbVersion);
             return before - entries.size();
         }
+
+        @Override
+        public int deleteByDocumentId(String tenantId, String kbId, String documentId, long kbVersion) {
+            int before = entries.size();
+            entries.removeIf(c -> c.tenantId().equals(tenantId)
+                    && c.kbId().equals(kbId)
+                    && c.documentId().equals(documentId));
+            return before - entries.size();
+        }
     }
 
     static class FakeEmbeddingGateway implements EmbeddingGateway {

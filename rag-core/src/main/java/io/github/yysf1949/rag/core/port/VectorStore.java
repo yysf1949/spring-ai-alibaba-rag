@@ -68,4 +68,19 @@ public interface VectorStore {
      * elsewhere (cleanup job, 7 days later per spec §6.1).
      */
     int deprecate(String tenantId, String kbId, long oldKbVersion);
+
+    /**
+     * Delete all chunks belonging to a specific document within a kbVersion.
+     *
+     * <p>Used by partial re-index: before re-ingesting a single document, its
+     * old chunks must be removed from the index so the new chunks replace them
+     * cleanly. Other documents in the same kbVersion are untouched.</p>
+     *
+     * @param tenantId   hard wall
+     * @param kbId       which KB
+     * @param documentId which document's chunks to remove
+     * @param kbVersion  which version of that KB
+     * @return number of chunks actually deleted
+     */
+    int deleteByDocumentId(String tenantId, String kbId, String documentId, long kbVersion);
 }

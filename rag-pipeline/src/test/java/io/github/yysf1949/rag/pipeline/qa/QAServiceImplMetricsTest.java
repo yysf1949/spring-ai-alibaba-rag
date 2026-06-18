@@ -226,6 +226,7 @@ class QAServiceImplMetricsTest {
         }
         @Override public void publish(String tenantId, String kbId, long kbVersion) { }
         @Override public int deprecate(String tenantId, String kbId, long oldKbVersion) { return 0; }
+        @Override public int deleteByDocumentId(String tenantId, String kbId, String documentId, long kbVersion) { return 0; }
     }
 
     static class StubRerank implements RerankService {

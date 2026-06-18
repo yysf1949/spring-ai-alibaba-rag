@@ -1050,3 +1050,96 @@ test: rag-agent/.../integration/DocumentVersionRollbackE2ETest
 - Phase 19 之后: 文档级 rollback 工作; 真 LLM E2E 验证 active 切换影响 LLM 答案; 文档级跟 KB 级完全解耦.
 - Phase 20 待做: partial re-index (只重建一个 doc 的 chunks, 保留其他 doc 的 active version); 真 LLM E2E 走 controller (P19 ship 时只走 tool); DocumentVersionService 迁移到 rag-redis live 测试 (用 Testcontainers).
 - P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; P2 ship: HEAD `a990dec`; **P19 ship: HEAD `6dd7700`**; 远端 MATCH.
+
+---
+
+## Phase 20 — Partial Re-index + Live Redis Tests + Controller E2E (2026-06-19)
+
+### 背景与目标
+
+Phase 19 ship 后: 文档级 rollback 工作; 真 LLM E2E 验证 active 切换影响 LLM 答案; 文档级跟 KB 级完全解耦.
+
+Phase 20 目标:
+1. **Partial re-index** — 只重建一个 doc 的 chunks, 保留其他 doc 的 active version
+2. **Testcontainers rag-redis live** — DocumentVersionService + KbVersionService 从 mock 测试迁移到真 Redis
+3. **Controller E2E** — REST surface 层验证 (P19 只走 tool, 不走 controller)
+
+### 关键决策
+
+| # | 决策 | 选择 | 理由 |
+|---|---|---|---|
+| A1 | partial re-index 入口 | `IngestService.reindexDocument(Document)` | 跟 `ingestSync` 平级, 清晰的语义: delete old → re-split → re-embed → upsert → auto-publish |
+| A2 | delete 粒度 | `VectorStore.deleteByDocumentId(tenant, kb, doc, version)` | RediSearch FT.SEARCH by documentId TAG → DEL each hash; 其他 doc 不动 |
+| A3 | auto-publish | reindexDocument 内 ingest 成功后自动 publish | 旧 chunks 已删, publish 是安全的; 避免 operator 忘 publish 导致 doc 消失 |
+| A4 | 测试策略 | Podman 直连 localhost:6379 (非 Testcontainers lifecycle) | Testcontainers 在 Podman 环境下无法找到 Docker socket; 直连已运行的 Redis Stack 更可靠 |
+| A5 | Controller 测试 | standalone MockMvc (无 Spring context) | `@WebMvcTest` 会扫全部 controller, 需要 mock 大量依赖; standalone 更轻量 |
+
+### 交付物 (3 commit)
+
+| # | commit | 增量 |
+|---|---|---|
+| T1 | `P20-T1` | VectorStore port +1 method (`deleteByDocumentId`), IngestService port +1 method (`reindexDocument`), RedisVectorStore impl (FT.SEARCH by documentId TAG → DEL), IngestServiceImpl impl (delete → runPipeline → auto-publish), 5 unit tests |
+| T2 | `P20-T2` | rag-redis/pom.xml +testcontainers-redis dep, 2 live test classes (12 DocumentVersion + 10 KbVersion = 22 tests against real Redis Stack) |
+| T3 | `P20-T3` | DocumentVersionControllerTest (7 tests: list/active/publish/rollback-via-publish/empty/missing-header) |
+
+### 测试矩阵
+
+```
+T1: IngestServiceImplReindexTest (5 tests, Mockito)
+  1. happy path: delete 3 old → reingest → publish → PUBLISHED
+  2. deleteByDocumentId fails → FAILED, no ingest
+  3. embedding fails after delete → FAILED
+  4. null document → IllegalArgumentException
+  5. upsert fails after delete+embed → FAILED
+
+T2a: RedisDocumentVersionServiceLiveTest (12 tests, real Redis)
+  1. registerVersion + listVersions
+  2. registerVersion idempotent
+  3. publish sets ACTIVE
+  4. publish deprecates previous active
+  5. publish idempotent
+  6. rollback reactivates old version
+  7. rollback nonexistent throws
+  8. resolveVersion negative → active
+  9. resolveVersion positive pass-through
+  10. resolveVersion nonexistent throws
+  11. empty tenant returns empty
+  12. getActiveVersion empty when never published
+
+T2b: RedisKbVersionServiceLiveTest (10 tests, real Redis)
+  1. registerVersion + listVersions
+  2. registerVersion idempotent
+  3. publish sets active pointer
+  4. publish idempotent
+  5. getActiveVersion after publish
+  6. resolveVersion negative → active
+  7. resolveVersion nonexistent throws
+  8. rollback reactivates old version
+  9. empty tenant returns empty
+  10. getActiveVersion empty when never published
+
+T3: DocumentVersionControllerTest (7 tests, standalone MockMvc)
+  1. list versions → 200 + JSON array
+  2. get active → 200 + activeVersionId
+  3. get active (none) → 200 + null
+  4. publish → 200 + calls service.publish
+  5. rollback via publish → 200
+  6. empty list → 200 + empty array
+  7. missing X-Tenant-Id → 400
+```
+
+### 测试基线 (P20 末)
+
+| 模块 | 测试数 | 增量 (P19 → P20) |
+|---|---|---|
+| rag-core | 18 | - |
+| rag-pipeline | **200** | +5 (reindex) |
+| rag-redis | **91** (23 skip) | +22 (live) |
+| rag-agent | **310** | +7 (controller) |
+| **总计** | **677** | **+34 新, 0 fail** |
+
+### P19 → Phase 20 增量
+
+- Phase 19 之后: 文档级 rollback 工作; 真 LLM E2E 验证 active 切换影响 LLM 答案; 文档级跟 KB 级完全解耦.
+- Phase 20 之后: partial re-index 只重建一个 doc 的 chunks, 保留其他 doc; DocumentVersionService + KbVersionService 从 mock 迁移到真 Redis live 测试; REST controller 层有独立集成测试; 真 LLM E2E 仍走 Phase 19 的 tool 层 (controller 层测试不依赖 LLM).
+- P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; P2 ship: HEAD `a990dec`; P19 ship: HEAD `6dd7700`; **P20 ship: HEAD `1e2d231`**; 远端 MATCH.

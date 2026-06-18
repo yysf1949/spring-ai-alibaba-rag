@@ -239,6 +239,53 @@ public class IngestServiceImpl implements IngestService {
         }
     }
 
+    @Override
+    public IngestJob reindexDocument(Document document) {
+        if (document == null) throw new IllegalArgumentException("document must not be null");
+        String kbId = document.kbId();
+        String docId = document.documentId();
+        String tenantId = document.tenantId();
+        if (kbId == null || kbId.isBlank()) throw new IllegalArgumentException("kbId must not be blank");
+        if (docId == null || docId.isBlank()) throw new IllegalArgumentException("docId must not be blank");
+        if (tenantId == null || tenantId.isBlank()) throw new IllegalArgumentException("tenantId must not be blank");
+
+        String compositeDocumentId = encodeDocumentId(kbId, docId);
+        IngestJob job = IngestJob.newPending(tenantId, compositeDocumentId, document.documentVersion());
+        jobRepository.save(job);
+        PipelineMdc.put(PipelineMdc.KEY_JOB_ID, job.jobId());
+        try {
+            // Step 1: delete old chunks for this document from the vector store.
+            // NOTE: pass the plain documentId (not the composite kbId/docId)
+            // because chunk metadata stores the raw documentId from the Document.
+            PipelineMdc.put(PipelineMdc.KEY_STAGE, "reindex-delete");
+            long kbVersion = parseKbVersion(job);
+            try {
+                int deleted = vectorStore.deleteByDocumentId(tenantId, kbId, docId, kbVersion);
+                log.info("reindexDocument: deleted {} old chunks for tenant={} kb={} doc={}",
+                        deleted, tenantId, kbId, docId);
+            } catch (VectorStoreUnavailableException ex) {
+                IngestJob failed = job.withStatus(IngestJobStatus.FAILED)
+                        .withError("reindex-delete: " + ex.getMessage());
+                jobRepository.save(failed);
+                recordJobTerminal(tenantId, "FAILED");
+                return failed;
+            }
+
+            // Step 2: re-run the standard ingest pipeline (split → embed → upsert → publish).
+            PipelineMdc.put(PipelineMdc.KEY_STAGE, "reindex-ingest");
+            IngestJob result = runPipeline(document, job);
+            if (result.status() == IngestJobStatus.READY) {
+                // Auto-publish after re-index — the old chunks are already gone,
+                // so publish is safe and atomic.
+                result = publish(result.jobId());
+            }
+            return result;
+        } finally {
+            MDC.remove(PipelineMdc.KEY_JOB_ID);
+            MDC.remove(PipelineMdc.KEY_STAGE);
+        }
+    }
+
     // ─── pipeline core ─────────────────────────────────────────────────────
 
     /**

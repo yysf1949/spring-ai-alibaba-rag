@@ -209,6 +209,15 @@ class RetrievalAdapterKbVersionE2ETest {
                             && e.getKey().version() == oldKbVersion);
             return before - entries.size();
         }
+
+        @Override
+        public int deleteByDocumentId(String tenantId, String kbId, String documentId, long kbVersion) {
+            int before = entries.size();
+            entries.entrySet().removeIf(e ->
+                    e.getKey().tenant().equals(tenantId)
+                            && e.getKey().kb().equals(kbId));
+            return before - entries.size();
+        }
     }
 
     static class FakeEmbeddingGateway implements EmbeddingGateway {
