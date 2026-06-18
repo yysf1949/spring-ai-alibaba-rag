@@ -15,12 +15,12 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
 import java.util.Set;
@@ -100,7 +100,7 @@ public class AgentController {
     @PostMapping(value = "/chat", produces = {MediaType.APPLICATION_JSON_VALUE, MediaType.TEXT_EVENT_STREAM_VALUE})
     @Operation(summary = "LLM 自由对话 (Phase 16)",
             description = "走 ChatClientService.chatWithMemory 或 stream. Accept: text/event-stream 触发 SSE.")
-    public ResponseEntity<?> chat(
+    public Object chat(  // 返回类型 Object: JSON 路径返 ResponseEntity<ChatReply>, SSE 路径返 SseEmitter
             @RequestHeader("X-Tenant-Id") String tenantId,
             @RequestHeader(value = "X-Session-Id", required = false) String sessionId,
             @RequestHeader(value = "Accept", required = false) String acceptHeader,
@@ -115,22 +115,44 @@ public class AgentController {
         boolean isStream = acceptHeader != null && acceptHeader.contains(MediaType.TEXT_EVENT_STREAM_VALUE);
 
         if (isStream) {
-            Flux<ServerSentEvent<String>> sse = chatClientService
-                    .stream(req.message(), conversationId, ctx)
-                    .map(token -> ServerSentEvent.<String>builder().data(token).build())
-                    .concatWith(Flux.just(ServerSentEvent.<String>builder()
-                            .event("done")
-                            .data("{\"conversationId\":\"" + conversationId + "\"}")
-                            .build()));
-            return ResponseEntity.ok()
-                    .header("X-Conversation-Id", conversationId)
-                    .contentType(MediaType.TEXT_EVENT_STREAM)
-                    .body(sse);
+            // Spring MVC SSE 标准做法: 用 SseEmitter, 把 Flux<String> subscribe 进去逐 token send.
+            // 不能直接返回 Flux<String> + text/event-stream — Spring MVC 默认无对应 converter
+            // (No converter for FluxConcatArray with preset Content-Type 'text/event-stream').
+            // 必须直接返回 SseEmitter 类型 (不能包 ResponseEntity), Spring MVC 才能识别走 SSE 路径.
+            SseEmitter emitter = new SseEmitter();
+            Flux<String> tokens = chatClientService.stream(req.message(), conversationId, ctx);
+            tokens
+                    .subscribe(
+                            token -> sendSse(emitter, token, "token"),
+                            err -> emitter.completeWithError(err),
+                            () -> {
+                                try {
+                                    emitter.send(SseEmitter.event()
+                                            .name("done")
+                                            .data("{\"conversationId\":\"" + conversationId + "\"}"));
+                                    emitter.complete();
+                                } catch (Exception e) {
+                                    emitter.completeWithError(e);
+                                }
+                            });
+            // 直接返回 emitter, Spring MVC 看到 SseEmitter 返回类型自动用 SSE 序列化
+            return emitter;
         }
 
         ChatReply reply = chatClientService.chatWithMemory(req.message(), conversationId, ctx);
         return ResponseEntity.ok()
                 .header("X-Conversation-Id", conversationId)
                 .body(reply);
+    }
+
+    /**
+     * SSE token 发送 helper — 静默吞掉 IOException (客户端断开常见, 不应回流污染主链路).
+     */
+    private void sendSse(SseEmitter emitter, String data, String eventName) {
+        try {
+            emitter.send(SseEmitter.event().name(eventName).data(data));
+        } catch (Exception ignored) {
+            // client disconnected mid-stream; emitter will be cleaned up by container
+        }
     }
 }
