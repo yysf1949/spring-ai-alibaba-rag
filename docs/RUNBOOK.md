@@ -335,3 +335,28 @@ requirement (spec §2.4 — 6 months).
 - [MULTI_TENANT.md](./MULTI_TENANT.md) — how tenants / permissions / PII
   are enforced, with examples of legal vs illegal request shapes.
 - The design spec — every "spec §X.X" in this file links back here.
+
+---
+
+## 11. Agent Action Layer 故障排查 (Phase 9)
+
+### 11.1 工具找不到 (404)
+
+- 检查 `InMemoryToolRegistry` 启动日志：应看到 `Registered tool [xxx]`
+- 检查 `@ToolSpec.name` 是否唯一 — 重复会 `IllegalStateException`
+
+### 11.2 风险门控拒绝 (403)
+
+- 看 `rag_agent_risk_denied_total` 指标，按 `level` 分桶
+- L2+ 工具必须传 `idempotencyToken`，否则 DENIED
+- L4 必须有 `admin` 角色
+
+### 11.3 幂等回放异常
+
+- 看 `rag_agent_idempotency_replays_total` — 突增说明上游有重试
+- 检查 `IdempotencyStore` 实现（InMemory 单实例；分布式需换 Redis）
+
+### 11.4 审计失败
+
+- 看 `rag.audit.errors.total` gauge
+- 检查 `AuditChannel` appender 配置（90 天 RollingFile）

@@ -266,3 +266,33 @@ FT.searchParams()
 3. [RUNBOOK.md §2-3](./RUNBOOK.md) — 本地跑起来 (10 min)
 4. 本文 §3 在线链 — 理解 7 层降级 (10 min)
 5. [LESSONS.md](./LESSONS.md) — 看实际踩过的坑 (15 min)
+
+---
+
+## 9. Agent Action Layer (Phase 9)
+
+> **新增模块**: `rag-agent` — 把企业后端 Service 改造成 AI Agent 可调用的工具集。
+
+### 9.1 三层架构
+
+| 层 | 子包 | 职责 |
+|---|---|---|
+| 编排层 | `orchestration/` | 意图理解 + 工具选择 + 调用循环；`SpringAiAgentAdapter` 桥接 Spring AI 1.0.9 `FunctionCallingCallback` |
+| 动作层 | `action/` | `@ToolSpec` + `ToolRegistry` + 4 级风险分级 |
+| 治理层 | `governance/` | 身份 + 幂等 + 风险门控 + 审计（桥接到现有 `LlmAuditHook`） |
+
+### 9.2 4 级工具风险
+
+| 级别 | 示例 | 自动执行 | 幂等键 |
+|---|---|---|---|
+| L1_READ | `kb_search` | ✅ | 不需要 |
+| L2_REVERSIBLE | `create_reminder_ticket` | ✅ | 强制 |
+| L3_BUSINESS_STATE | （未来：创建退款） | ⚠️ 二次确认 | 强制 |
+| L4_HIGH_RISK | （未来：删除 KB） | ❌ 需 admin | 强制 |
+
+### 9.3 升级路径
+
+当前使用 Spring AI 1.0.9 `FunctionCallingCallback`。业务侧只依赖
+`ToolDescriptor` 抽象层，升级 2.0 `@Tool` 时只改 `SpringAiAgentAdapter` 一个文件。
+
+参考文章: 「路条编程」《Salesforce 36 亿美元押注 AI 客服》(2026-06-17)

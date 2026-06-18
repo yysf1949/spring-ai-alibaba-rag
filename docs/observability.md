@@ -337,3 +337,21 @@ cat logs/audit.log | jq -c 'select(.tenantId=="tenant-refund")' | tail -20
 | 触发 | 每个事件都写 | 聚合 (counter/timer) |
 
 两个系统**互补不互斥**。同一 LLM 调用既写 `rag.llm.calls.total{outcome}` 计数器,也写一条 `LLM_CALL` 事件。
+
+---
+
+## 10. Agent 治理指标 (Phase 9)
+
+| 指标 | 类型 | 说明 |
+|---|---|---|
+| `rag_agent_tool_invocations_total{tool,outcome}` | Counter | 工具调用次数（SUCCESS/FAILURE/DENIED） |
+| `rag_agent_tool_latency_ms{tool}` | Timer | 端到端延迟（含治理层） |
+| `rag_agent_idempotency_replays_total{tool}` | Counter | 幂等回放次数 |
+| `rag_agent_risk_denied_total{tool,level}` | Counter | 风险门控拒绝次数 |
+| `rag.audit.errors.total` (已存在) | Gauge | 审计通道错误 |
+
+**审计日志格式**（复用 `LlmAuditHook`）:
+```
+audit: {"timestamp":"...","type":"AGENT_TOOL_CALL","tenantId":"t1","actorId":"u1",
+"resourceId":"kb_search","outcome":"SUCCESS","fields":{"latencyMs":12,"queryHash":"..."}}
+```

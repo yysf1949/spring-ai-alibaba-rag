@@ -303,3 +303,20 @@ docs/
 4. `git ls-remote origin main` — 远端 HEAD 没掉队
 
 **教训**: 多次出现"我以为 push 了"但实际 push 失败,导致下一 cluster 接力时基于旧 HEAD 操作。
+
+---
+
+## 14. 工具风险分级 (Phase 9 新增)
+
+**原则**: 每个 Agent 可调用的工具必须明确标注风险级别（L1-L4），治理层强制门控。
+
+| 级别 | 治理要求 |
+|---|---|
+| L1 | 自动放行 |
+| L2 | idempotencyKey 强制 |
+| L3 | idempotencyKey 强制 + 用户二次确认 |
+| L4 | idempotencyKey 强制 + admin 角色 |
+
+**反模式**: 把"查询"和"修改"做成同一个大工具 — 模型选错参数就把查询变写操作。
+
+参考「路条编程」AI 客服文章 §"查询 ≠ 执行，必须拆开"。

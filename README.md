@@ -171,6 +171,7 @@ mvn -pl rag-test test -Dtest=RefundRuleEndToEndTest
 | `rag-pipeline` | 编排 (Ingest / Rewrite / Rerank / ContextAssember / QA) | rag-core + rag-redis + rag-embedding |
 | `rag-app` | Spring Boot 装配 (HTTP / MDC / OpenAPI / RFC 7807) | 全栈 |
 | `rag-test` | 集成测试 + §18 退款规则 demo | Testcontainers + testcontainers-redis |
+| `rag-agent` (Phase 9+) | Agent Action Layer — 把企业后端 Service 改造成 AI Agent 可调用的工具集 (3 层架构 + 4 级风险分级) | Spring AI 1.0.9 + Micrometer |
 
 ---
 

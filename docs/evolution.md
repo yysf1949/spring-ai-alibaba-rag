@@ -184,3 +184,12 @@ Multi-region:
 - [docs/deployment.md](./deployment.md) — 部署演进
 - [docs/checklist.md](./checklist.md) — 上线 checklist
 - [docs/faq.md](./faq.md) — 已踩过的坑
+
+---
+
+## Phase 9 — Agent Action Layer (进行中)
+
+- **新模块**: `rag-agent`
+- **核心**: 3 层架构（编排/动作/治理）+ 4 级工具风险分级
+- **参考**: 「路条编程」AI 客服文章 (2026-06-17)
+- **未做**: 真实 LLM 接入 + Spring AI 2.0 升级 + 多 Agent 协作
