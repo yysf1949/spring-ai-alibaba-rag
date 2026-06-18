@@ -1,39 +1,39 @@
--- Phase 11: H2 DDL for InMemory → persistent migration (readied for Task 3~6)
--- Run on dev/prod H2 console; production uses MySQL via Flyway.
+-- Phase 11 Task 4: H2 DDL for @Profile("h2") persistent backend
+-- Tables match H2OrderRepository / H2RefundRepository / H2CouponRepository / H2TicketRepository
 
-CREATE TABLE IF NOT EXISTS orders (
-    order_id    VARCHAR(64) PRIMARY KEY,
-    tenant_id   VARCHAR(32) NOT NULL,
-    user_id     VARCHAR(64) NOT NULL,
-    amount_cents BIGINT     NOT NULL,
-    status      VARCHAR(32) NOT NULL
+CREATE TABLE IF NOT EXISTS agent_order (
+    order_id   VARCHAR(64)   NOT NULL PRIMARY KEY,
+    tenant_id  VARCHAR(64)   NOT NULL,
+    user_id    VARCHAR(128)  NOT NULL,
+    amount_cents BIGINT      NOT NULL DEFAULT 0,
+    status     VARCHAR(32)   NOT NULL DEFAULT 'CREATED'
 );
 
-CREATE TABLE IF NOT EXISTS refunds (
-    refund_id   VARCHAR(64) PRIMARY KEY,
-    tenant_id   VARCHAR(32) NOT NULL,
-    user_id     VARCHAR(64) NOT NULL,
-    order_id    VARCHAR(64) NOT NULL,
-    amount_cents BIGINT     NOT NULL,
-    reason      VARCHAR(256),
-    status      VARCHAR(32) NOT NULL
+CREATE TABLE IF NOT EXISTS agent_refund (
+    refund_id    VARCHAR(64)  NOT NULL PRIMARY KEY,
+    tenant_id    VARCHAR(64)  NOT NULL,
+    user_id      VARCHAR(128) NOT NULL,
+    order_id     VARCHAR(64)  NOT NULL,
+    amount_cents BIGINT       NOT NULL DEFAULT 0,
+    reason       VARCHAR(512),
+    status       VARCHAR(32)  NOT NULL DEFAULT 'PENDING'
 );
 
-CREATE TABLE IF NOT EXISTS coupons (
-    coupon_id   VARCHAR(64) PRIMARY KEY,
-    tenant_id   VARCHAR(32) NOT NULL,
-    user_id     VARCHAR(64) NOT NULL,
-    order_id    VARCHAR(64),
-    amount_cents BIGINT     NOT NULL,
-    reason_tag  VARCHAR(64),
-    status      VARCHAR(32) NOT NULL
+CREATE TABLE IF NOT EXISTS agent_coupon (
+    coupon_id    VARCHAR(64)  NOT NULL PRIMARY KEY,
+    tenant_id    VARCHAR(64)  NOT NULL,
+    user_id      VARCHAR(128) NOT NULL,
+    order_id     VARCHAR(64),
+    amount_cents BIGINT       NOT NULL DEFAULT 0,
+    reason_tag   VARCHAR(64),
+    status       VARCHAR(32)  NOT NULL DEFAULT 'ACTIVE'
 );
 
-CREATE TABLE IF NOT EXISTS tickets (
-    ticket_id   VARCHAR(64) PRIMARY KEY,
-    tenant_id   VARCHAR(32) NOT NULL,
-    user_id     VARCHAR(64) NOT NULL,
-    summary     VARCHAR(512) NOT NULL,
-    status      VARCHAR(32) NOT NULL,
-    created_at  BIGINT NOT NULL
+CREATE TABLE IF NOT EXISTS agent_ticket (
+    ticket_id   VARCHAR(64)   NOT NULL PRIMARY KEY,
+    tenant_id   VARCHAR(64)   NOT NULL,
+    user_id     VARCHAR(128)  NOT NULL,
+    summary     VARCHAR(1024),
+    status      VARCHAR(32)   NOT NULL DEFAULT 'OPEN',
+    created_at  BIGINT        NOT NULL
 );
