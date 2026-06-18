@@ -38,6 +38,17 @@
             <artifactId>spring-ai-model</artifactId>
         </dependency>
 
+        <!-- Phase 15 Task 1: OpenAI-compatible ChatClient (用于接 DeepSeek).
+             注: spring-ai-openai-spring-boot-starter 在 Spring AI 1.0 GA 后改名为
+             spring-ai-starter-model-openai (旧名只到 1.0.0-M6).
+             spring-ai-bom 1.0.9 管理新名字版本, 无需显式 version.
+             默认 base-url=https://api.openai.com, 通过 spring.ai.openai.base-url=https://api.deepseek.com 切到 DeepSeek.
+             ChatClient.Builder 由 starter 自动配置 (默认 profile 不激活, 需 spring.profiles.active=deepseek). -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+
         <!-- Spring 上下文（编排层用 Bean 注入；治理层用 @ConditionalOnProperty） -->
         <dependency>
             <groupId>org.springframework</groupId>
