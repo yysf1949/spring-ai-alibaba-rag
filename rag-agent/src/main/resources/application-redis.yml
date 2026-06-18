@@ -1,0 +1,7 @@
+# Phase 11 — Agent Redis 存储后端
+# 激活: --spring.profiles.active=redis
+# 前提: Redis 已运行 (127.0.0.1:6379), spring.rag.redis.enabled=true
+spring:
+  rag:
+    redis:
+      enabled: true

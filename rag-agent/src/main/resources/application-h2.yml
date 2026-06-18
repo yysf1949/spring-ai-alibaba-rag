@@ -1,0 +1,14 @@
+# Phase 11 — Agent H2 embedded 存储后端
+# 激活: --spring.profiles.active=dev,h2
+# 前提: 无 (H2 内嵌, 0 配置)
+# 数据文件: ~/.rag-agent/data/h2/agent (自动创建)
+spring:
+  datasource:
+    url: jdbc:h2:file:~/.rag-agent/data/h2/agent;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console

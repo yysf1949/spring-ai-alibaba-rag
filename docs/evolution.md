@@ -205,4 +205,16 @@ Multi-region:
   - 业务工具用内存 Repository mock (生产换真实 Service)
   - 多渠道只预留 ChannelAdapter interface，Wechat/Email/App 推到 Phase 11
   - IdempotencyStore 走 Redis 持久化（opt-in by `agent.idempotency.store=redis`）
-- **下一阶段**: Phase 11 — 多渠道接入实现 (微信客服) + 真实业务 Service 集成
+- **下一阶段**: Phase 11 (已shipped) — 见下方
+
+## Phase 11 — 多存储后端持久化 (2026-06-18)
+
+- **Status**: shipped
+- **Range**: 4 Port interfaces + H2 embedded + MySQL JPA + Redis 3 种持久化后端
+- **关键决策**:
+  - Repository 抽 Port interface, Tool 只依赖接口 (修复 TicketTool 直接依赖 InMemoryTicketRepository 反模式)
+  - H2 via `JdbcTemplate` + `MERGE INTO` (轻量，不拉 JPA)
+  - MySQL via Spring Data JPA (4 @Entity + 4 JpaRepository + 4 Adapter)
+  - Redis via `RedisStoreFactory` + `JedisPooled` (沿用 Phase 7 基础设施)
+  - Profile 切换: `h2`(dev) / `mysql`(prod) / `redis`(high-perf) / 空(单元测试/InMemory)
+- **下一阶段**: 待定
