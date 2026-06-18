@@ -1,5 +1,8 @@
 package io.github.yysf1949.rag.agent.action;
 
+import io.github.yysf1949.rag.agent.governance.AgentIdentity;
+import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
+
 import java.lang.reflect.Method;
 
 /**
@@ -28,19 +31,41 @@ public record ToolDescriptor(
 ) {
 
     /**
-     * Spring AI 1.0.9 的 FunctionCallback 不支持复杂对象参数，故此约束：
-     * 工具方法必须有且仅有一个参数，且参数类型是简单 DTO（POJO + 标准 getter）。
-     * 该校验在 ToolRegistry 扫描时执行。
+     * 工具方法签名校验 — 允许 1-3 个参数。
+     *
+     * <h2>参数位置约定（编排层按类型注入）</h2>
+     * <ol>
+     *   <li>参数 0（可选）: {@link AgentIdentity} — 编排层注入调用者身份</li>
+     *   <li>参数 1（可选）: {@link IdempotencyKey} — 编排层注入幂等键（L2+ 写操作必传）</li>
+     *   <li>最后一个参数（必传）: 业务 DTO — POJO/record，非 primitive / String / 特殊治理类型</li>
+     * </ol>
+     *
+     * <p>工具 <em>可以</em> 只声明最后一个参数（最简形态，1 个参数，向后兼容）。</p>
+     *
+     * <h2>Spring AI 1.0.9 {@code FunctionCallback} 单参数约束</h2>
+     * <p>{@code SpringAiAgentAdapter} 走的是 Spring AI 1.0.9 {@code FunctionToolCallback}，
+     * 它的 {@code Function<I,O>} 接口只允许单参数 — 故 {@link #invoke(Object)} 仅把
+     * {@code request} 传给业务 DTO 位置。如果工具声明 3 个参数（含 {@code AgentIdentity} /
+     * {@code IdempotencyKey}），Spring AI 1.0.9 路径 <b>不</b>适用，只能走
+     * {@code AgentLoop.execute(AgentRequest)}（编排层显式调用）。</p>
      */
     public void validate() {
-        if (method.getParameterCount() != 1) {
+        Class<?>[] params = method.getParameterTypes();
+        if (params.length < 1 || params.length > 3) {
             throw new IllegalStateException(String.format(
-                    "Tool [%s] method must accept exactly 1 parameter, got %d",
-                    name, method.getParameterCount()));
+                    "Tool [%s] must accept 1-3 parameters (AgentIdentity, IdempotencyKey, Request), got %d",
+                    name, params.length));
         }
         if (method.getReturnType() == void.class) {
             throw new IllegalStateException(String.format(
                     "Tool [%s] method must have a return type (void is not allowed)", name));
+        }
+        // 最后一个参数（业务 DTO）必须是 POJO，非 primitive / String / 特殊治理类型
+        Class<?> businessParam = params[params.length - 1];
+        if (businessParam.isPrimitive() || businessParam == String.class
+                || businessParam == AgentIdentity.class || businessParam == IdempotencyKey.class) {
+            throw new IllegalStateException(String.format(
+                    "Tool [%s] last parameter must be a business DTO, got %s", name, businessParam.getName()));
         }
     }
 
