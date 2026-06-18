@@ -1,5 +1,6 @@
 package io.github.yysf1949.rag.agent.orchestration;
 
+import io.github.yysf1949.rag.agent.api.ChatReply;
 import io.github.yysf1949.rag.agent.governance.AuthorizationContext;
 import io.github.yysf1949.rag.agent.governance.ToolAuthorizer;
 import org.springframework.ai.chat.client.ChatClient;
@@ -7,6 +8,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Objects;
@@ -55,6 +57,9 @@ public class ChatClientService {
     private final SpringAiAgentAdapter adapter;
     private final ToolAuthorizer toolAuthorizer;
 
+    /** 大写常量名约定，便于调用方阅读 */
+    private static final String CONVERSATION_ID_KEY = "chat_memory_conversation_id";
+
     public ChatClientService(ChatClient chatClient,
                              SpringAiAgentAdapter adapter,
                              ToolAuthorizer toolAuthorizer) {
@@ -96,5 +101,68 @@ public class ChatClientService {
     public int visibleToolCount(AuthorizationContext ctx, List<String> allTools) {
         AuthorizationContext effective = (ctx != null) ? ctx : AuthorizationContext.permissive();
         return toolAuthorizer.authorizedTools(effective, allTools).size();
+    }
+
+    // ============================================================
+    // Phase 16 Task 2: 多轮对话 + SSE 流式 — 既有 chat() 不动
+    // ============================================================
+
+    /**
+     * 多轮对话 + blocking 返回 — AgentController JSON 模式默认走这个.
+     *
+     * <p>与 {@link #chat} 的区别: chat() 是单次 Prompt (无 history);
+     * chatWithMemory() 通过 MessageChatMemoryAdvisor 把 conversationId 对应的历史消息
+     * 自动拼到 system prompt, 实现多轮上下文.</p>
+     *
+     * @param userMessage     用户原始消息
+     * @param conversationId  本次会话 ID; 客户端复用同一 ID → 多轮
+     * @param ctx             授权上下文; null → permissive
+     * @return LLM 最终文本 + 透传 conversationId
+     */
+    public ChatReply chatWithMemory(String userMessage, String conversationId, AuthorizationContext ctx) {
+        Objects.requireNonNull(userMessage, "userMessage");
+        Objects.requireNonNull(conversationId, "conversationId");
+        AuthorizationContext effective = (ctx != null) ? ctx : AuthorizationContext.permissive();
+
+        FunctionToolCallback[] fnCallbacks = adapter.getFunctionCallbacks(effective);
+        List<ToolCallback> callbacks = new java.util.ArrayList<>(fnCallbacks.length);
+        for (FunctionToolCallback cb : fnCallbacks) callbacks.add(cb);
+
+        String content = chatClient.prompt()
+                .system(SYSTEM_PROMPT)
+                .user(userMessage)
+                .toolCallbacks(callbacks)
+                .advisors(a -> a.param(CONVERSATION_ID_KEY, conversationId))
+                .call()
+                .content();
+
+        return new ChatReply(content, conversationId);
+    }
+
+    /**
+     * 多轮对话 + SSE 流式 — AgentController text/event-stream 模式走这个.
+     *
+     * <p>返回的 {@code Flux<String>} 每个元素是一段 LLM 流式 chunk (4-32 tokens),
+     * 由 Spring AI 流式协议自动切分, 不在应用层做字符级切分.</p>
+     *
+     * <p>出错处理: Flux 异常会沿 reactor 链传播, Spring MVC SSE writer 默认会把错误
+     * 以 completed-error 形式发给客户端. 阶段收口外 (Phase 18+) 再考虑结构化 error event.</p>
+     */
+    public Flux<String> stream(String userMessage, String conversationId, AuthorizationContext ctx) {
+        Objects.requireNonNull(userMessage, "userMessage");
+        Objects.requireNonNull(conversationId, "conversationId");
+        AuthorizationContext effective = (ctx != null) ? ctx : AuthorizationContext.permissive();
+
+        FunctionToolCallback[] fnCallbacks = adapter.getFunctionCallbacks(effective);
+        List<ToolCallback> callbacks = new java.util.ArrayList<>(fnCallbacks.length);
+        for (FunctionToolCallback cb : fnCallbacks) callbacks.add(cb);
+
+        return chatClient.prompt()
+                .system(SYSTEM_PROMPT)
+                .user(userMessage)
+                .toolCallbacks(callbacks)
+                .advisors(a -> a.param(CONVERSATION_ID_KEY, conversationId))
+                .stream()
+                .content();
     }
 }
