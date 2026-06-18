@@ -2,6 +2,8 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
+import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryOrderRepository;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
@@ -24,9 +26,9 @@ public class OrderTool {
     /** 取消订单单笔金额上限（分）— 100 元 */
     public static final long CANCEL_MAX_AMOUNT_CENTS = 100_00L;
 
-    private final OrderRepository repo;
+    private final InMemoryOrderRepository repo;
 
-    public OrderTool(OrderRepository repo) {
+    public OrderTool(InMemoryOrderRepository repo) {
         this.repo = repo;
     }
 
@@ -63,7 +65,7 @@ public class OrderTool {
         if (!Set.of("CREATED", "PAID").contains(order.status())) {
             throw new IllegalStateException("Cannot cancel order in status: " + order.status());
         }
-        var cancelled = new OrderRepository.Order(
+        var cancelled = new OrderRepositoryPort.OrderRecord(
                 order.orderId(), order.tenantId(), order.userId(),
                 order.amountCents(), "CANCELLED");
         repo.save(cancelled);

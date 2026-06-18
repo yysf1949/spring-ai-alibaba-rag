@@ -6,6 +6,11 @@ import io.github.yysf1949.rag.agent.api.AgentOutcome;
 import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.builtin.*;
+import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryCouponRepository;
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryOrderRepository;
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryRefundRepository;
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryTicketRepository;
 import io.github.yysf1949.rag.agent.governance.*;
 import io.github.yysf1949.rag.agent.handoff.HandoffService;
 import io.github.yysf1949.rag.agent.handoff.HumanReviewQueue;
@@ -46,8 +51,8 @@ import static org.mockito.Mockito.when;
 class Phase10EndToEndTest {
 
     private DefaultAgentLoop loop;
-    private OrderRepository orderRepo;
-    private RefundRepository refundRepo;
+    private InMemoryOrderRepository orderRepo;
+    private InMemoryRefundRepository refundRepo;
 
     @BeforeEach
     void setUp() {
@@ -65,19 +70,19 @@ class Phase10EndToEndTest {
             ctx.register(KbSearchTool.class, TicketTool.class, InMemoryTicketRepository.class,
                     InMemoryIdempotencyStore.class, DefaultRiskGate.class,
                     InMemoryToolRegistry.class,
-                    OrderTool.class, OrderRepository.class,
-                    RefundTool.class, RefundRepository.class,
-                    CouponTool.class, CouponRepository.class,
+                    OrderTool.class, InMemoryOrderRepository.class,
+                    RefundTool.class, InMemoryRefundRepository.class,
+                    CouponTool.class, InMemoryCouponRepository.class,
                     LogisticsTool.class);
             ctx.refresh();
 
             ToolRegistry registry = ctx.getBean(InMemoryToolRegistry.class);
             registry.scanFromContext(ctx);
-            orderRepo = ctx.getBean(OrderRepository.class);
-            refundRepo = ctx.getBean(RefundRepository.class);
+            orderRepo = ctx.getBean(InMemoryOrderRepository.class);
+            refundRepo = ctx.getBean(InMemoryRefundRepository.class);
 
             // 预置一个可取消的订单
-            orderRepo.save(new OrderRepository.Order("ORD-1", "t1", "user-1", 50_00L, "CREATED"));
+            orderRepo.save(new OrderRepositoryPort.OrderRecord("ORD-1", "t1", "user-1", 50_00L, "CREATED"));
 
             LlmAuditHook hook = (t, u, s, q, m, pt, pb, c, l, o) -> auditOutcomes.add(o);
             ToolAuditBridge bridge = new ToolAuditBridge(hook);

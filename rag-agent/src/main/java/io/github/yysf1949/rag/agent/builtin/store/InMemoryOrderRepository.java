@@ -1,5 +1,6 @@
-package io.github.yysf1949.rag.agent.builtin;
+package io.github.yysf1949.rag.agent.builtin.store;
 
+import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
 import org.springframework.stereotype.Repository;
 
 import java.util.Map;
@@ -19,17 +20,19 @@ import java.util.concurrent.ConcurrentHashMap;
  * IllegalArgumentException，对齐「路条编程」文章 §"Agent 不能绕过原有业务规则"。</p>
  */
 @Repository
-public class OrderRepository {
+public class InMemoryOrderRepository implements OrderRepositoryPort {
 
-    private final Map<String, Order> store = new ConcurrentHashMap<>();
+    private final Map<String, OrderRepositoryPort.OrderRecord> store = new ConcurrentHashMap<>();
 
-    public Order save(Order order) {
+    @Override
+    public OrderRepositoryPort.OrderRecord save(OrderRepositoryPort.OrderRecord order) {
         store.put(order.orderId(), order);
         return order;
     }
 
-    public Optional<Order> findByIdAndTenant(String orderId, String tenantId) {
-        Order o = store.get(orderId);
+    @Override
+    public Optional<OrderRepositoryPort.OrderRecord> findByIdAndTenant(String orderId, String tenantId) {
+        OrderRepositoryPort.OrderRecord o = store.get(orderId);
         if (o == null) return Optional.empty();
         if (!o.tenantId().equals(tenantId)) {
             throw new IllegalArgumentException(
@@ -38,12 +41,4 @@ public class OrderRepository {
         }
         return Optional.of(o);
     }
-
-    public record Order(
-            String orderId,
-            String tenantId,
-            String userId,
-            long amountCents,
-            String status  // CREATED / PAID / SHIPPED / DELIVERED / CANCELLED
-    ) { }
 }

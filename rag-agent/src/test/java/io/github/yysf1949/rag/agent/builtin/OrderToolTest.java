@@ -1,5 +1,7 @@
 package io.github.yysf1949.rag.agent.builtin;
 
+import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryOrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -7,14 +9,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OrderToolTest {
 
-    private OrderRepository repo;
+    private InMemoryOrderRepository repo;
     private OrderTool tool;
 
     @BeforeEach
     void setUp() {
-        repo = new OrderRepository();
+        repo = new InMemoryOrderRepository();
         // 预置数据 — CREATED 状态才能被 cancel（plan 业务规则要求只 CREATED/PAID 可取消）
-        repo.save(new OrderRepository.Order(
+        repo.save(new OrderRepositoryPort.OrderRecord(
                 "ORD-1", "tenant-1", "user-1", 100_00L, "CREATED"));
         tool = new OrderTool(repo);
     }
@@ -59,7 +61,7 @@ class OrderToolTest {
     @Test
     void cancelOrderOnShippedFails() {
         // 已发货订单不能取消
-        repo.save(new OrderRepository.Order(
+        repo.save(new OrderRepositoryPort.OrderRecord(
                 "ORD-2", "tenant-1", "user-1", 50_00L, "DELIVERED"));
         assertThatThrownBy(() ->
                 tool.cancelOrder(new OrderTool.CancelOrderRequest(

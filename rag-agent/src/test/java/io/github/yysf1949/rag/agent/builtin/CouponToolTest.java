@@ -1,5 +1,6 @@
 package io.github.yysf1949.rag.agent.builtin;
 
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryCouponRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -7,12 +8,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CouponToolTest {
 
-    private CouponRepository repo;
+    private InMemoryCouponRepository repo;
     private CouponTool tool;
 
     @BeforeEach
     void setUp() {
-        repo = new CouponRepository();
+        repo = new InMemoryCouponRepository();
         tool = new CouponTool(repo);
     }
 

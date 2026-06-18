@@ -2,6 +2,8 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
+import io.github.yysf1949.rag.agent.builtin.port.RefundRepositoryPort;
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryRefundRepository;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,9 +21,9 @@ public class RefundTool {
     /** 创建退款单笔金额上限（分）— 500 元 */
     public static final long CREATE_MAX_AMOUNT_CENTS = 500_00L;
 
-    private final RefundRepository repo;
+    private final InMemoryRefundRepository repo;
 
-    public RefundTool(RefundRepository repo) {
+    public RefundTool(InMemoryRefundRepository repo) {
         this.repo = repo;
     }
 
@@ -39,8 +41,8 @@ public class RefundTool {
             throw new io.github.yysf1949.rag.agent.exception.AmountLimitExceededException(
                     "create_refund", req.amountCents(), CREATE_MAX_AMOUNT_CENTS);
         }
-        var refund = new RefundRepository.Refund(
-                RefundRepository.newRefundId(),
+        var refund = new RefundRepositoryPort.RefundRecord(
+                RefundRepositoryPort.newRefundId(),
                 req.tenantId(), req.userId(), req.orderId(),
                 req.amountCents(), req.reason(), "PENDING");
         repo.save(refund);
@@ -61,7 +63,7 @@ public class RefundTool {
         if ("APPROVED".equals(existing.status())) {
             return new ApproveRefundResponse(existing.refundId(), "APPROVED", existing.amountCents());
         }
-        var approved = new RefundRepository.Refund(
+        var approved = new RefundRepositoryPort.RefundRecord(
                 existing.refundId(), existing.tenantId(), existing.userId(),
                 existing.orderId(), existing.amountCents(), existing.reason(), "APPROVED");
         repo.save(approved);

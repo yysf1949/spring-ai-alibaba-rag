@@ -2,12 +2,13 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
+import io.github.yysf1949.rag.agent.builtin.port.TicketRepositoryPort;
+import io.github.yysf1949.rag.agent.builtin.store.InMemoryTicketRepository;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -57,7 +58,7 @@ public class TicketTool {
             String sourceTool,
             String description,
             String status,
-            Instant createdAt
+            long createdAt
     ) { }
 
     @ToolSpec(
@@ -82,14 +83,13 @@ public class TicketTool {
 
         // 第一次：创建 + 回填 idempotency
         String ticketId = "TKT-" + UUID.randomUUID().toString().substring(0, 8);
-        Ticket ticket = new Ticket(
+        TicketRepositoryPort.TicketRecord ticket = new TicketRepositoryPort.TicketRecord(
                 ticketId,
                 identity.tenantId(),
                 identity.userId(),
-                request.sourceTool(),
                 request.description(),
                 "PENDING",
-                Instant.now());
+                System.currentTimeMillis());
         repository.save(ticket);
 
         // 用相同 key 把 ticketId 写回 — 第二次 REPLAY 时能拿回
