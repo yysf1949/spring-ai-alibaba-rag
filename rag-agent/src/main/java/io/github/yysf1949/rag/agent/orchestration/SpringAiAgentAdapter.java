@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.yysf1949.rag.agent.action.ToolDescriptor;
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
+import io.github.yysf1949.rag.agent.governance.AuthorizationContext;
+import io.github.yysf1949.rag.agent.governance.ToolAuthorizer;
 import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.stereotype.Component;
 
@@ -32,18 +34,36 @@ import java.util.function.Function;
 public class SpringAiAgentAdapter {
 
     private final ToolRegistry registry;
+    private final ToolAuthorizer toolAuthorizer;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public SpringAiAgentAdapter(ToolRegistry registry) {
+    public SpringAiAgentAdapter(ToolRegistry registry, ToolAuthorizer toolAuthorizer) {
         this.registry = registry;
+        this.toolAuthorizer = toolAuthorizer;
     }
 
     /**
      * 把所有已注册 Tool 翻译成 Spring AI 1.0.9 的 {@code FunctionToolCallback}。
+     *
+     * <p><b>无 ctx 退化路径</b>：返回全部工具（向后兼容旧调用方）。
+     * 生产 ChatClient 接入应走 {@link #getFunctionCallbacks(AuthorizationContext)} 显式传 ctx，
+     * 让 LLM 只能看到授权范围内的 tool。</p>
      */
     public FunctionToolCallback[] getFunctionCallbacks() {
-        List<FunctionToolCallback> out = new ArrayList<>();
-        for (String name : registry.listNames()) {
+        return getFunctionCallbacks(AuthorizationContext.permissive());
+    }
+
+    /**
+     * 根据 {@link AuthorizationContext} 过滤 + 翻译。
+     *
+     * <h2>对齐「路条编程」文章 §4 渐进式工具授权</h2>
+     * <p>用户"询问规则"阶段传 awaitingConfirmation ctx → LLM 只看到 L1 工具;
+     * 用户"已确认"阶段传 confirmed ctx → 加上 L2/L3。L4 工具仍由人工触发, 不进入 callback 数组。</p>
+     */
+    public FunctionToolCallback[] getFunctionCallbacks(AuthorizationContext ctx) {
+        List<String> allowed = toolAuthorizer.authorizedTools(ctx, registry.listNames());
+        List<FunctionToolCallback> out = new ArrayList<>(allowed.size());
+        for (String name : allowed) {
             ToolDescriptor desc = registry.get(name);
             // SpringAiFunctionImpl 把 JSON 字符串反序列化成工具方法的入参 DTO，再 invoke
             SpringAiFunctionImpl fn = new SpringAiFunctionImpl(desc, objectMapper);

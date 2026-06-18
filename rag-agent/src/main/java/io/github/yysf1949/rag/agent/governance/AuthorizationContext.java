@@ -34,4 +34,20 @@ public record AuthorizationContext(
         Set<String> allowedTools,    // 本次请求允许的工具子集; null/empty = 不强制白名单
         RiskLevel maxRiskLevel,      // 本次请求最高允许的风险级
         boolean requiresConfirmation // 是否在"等待用户确认"阶段 (true → 只 L1/L2, false → 全开)
-) { }
+) {
+
+    /** 无限制 ctx — 让 LLM 看到所有已注册 tool (L1-L3, 不含 L4)。用于无 ctx 退化路径。 */
+    public static AuthorizationContext permissive() {
+        return new AuthorizationContext(null, null, null, RiskLevel.L3_BUSINESS_STATE, false);
+    }
+
+    /** 等待用户确认阶段 ctx — 仅 L1 + L2。 */
+    public static AuthorizationContext awaitingConfirmation(AgentIdentity identity) {
+        return new AuthorizationContext(identity, null, null, null, true);
+    }
+
+    /** 用户已确认阶段 ctx — L1-L3 全开。 */
+    public static AuthorizationContext confirmed(AgentIdentity identity) {
+        return new AuthorizationContext(identity, null, null, null, false);
+    }
+}
