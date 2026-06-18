@@ -937,5 +937,116 @@ kb_version_tool(action="GET_ACTIVE", tenantId="t1", kbId="kb-product")
 ### P2 → Phase 19 增量
 
 - Phase 18 P2 之后: Agent 能查 / 切 / 发布 KB 版本; backend (H2/MySQL/Redis) 全部就位; controller REST 暴露给 curl / 前端.
-- Phase 19 待做: 文档粒度版本 (E2) + partial re-index + 真 LLM E2E 走 controller E2E (P2 ship 时用 @MockBean 跳过).
-- P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; P2 ship: HEAD `a990dec`; 远端 MATCH.
+- Phase 19 之后: 文档级版本 (DocumentVersionService), RetrievalAdapter 新增 per-doc override map + 优先级链 (override > DocService > KbService > 0), KbSearchTool 通过 kbVersion=-1 让 adapter 自动解析 doc active version, 真 DeepSeek E2E (publish → search → rollback → search) 验证 14.23s PASS.
+- P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; P2 ship: HEAD `a990dec`; **P19 ship: HEAD `6dd7700`**; 远端 MATCH.
+
+---
+
+## Phase 19 — 文档级版本管理 + 真 LLM E2E (2026-06-19)
+
+### 业务背景
+
+Phase 18 P2 ship 后 KB 版本粒度是**整 KB**: 一次 publish 整个 KB 切到新版本. 用户真实诉求更细:
+
+1. 同一 KB 内"产品手册 v1.pdf"v2 上线后, 老引用 (已嵌入 chat 的 citation) 不应瞬时全失效
+2. 想看"某 doc 的历史版本" (审计 / 回滚到具体 doc)
+3. partial re-index (只重建一个 doc, 不重建整个 KB)
+
+Phase 19 解决 1+2+3: 文档级版本层 + 真 LLM 走全流程 E2E 验证.
+
+### 关键决策
+
+| # | 决策 | 选择 | 理由 |
+|---|---|---|---|
+| E2 | 版本粒度 | 文档组级 (chunk 集合 + `docId` tag) | spec §20 phase 19 暗示 + Chunk 已有 metadata, 不必拆数据模型 |
+| F2 | versionId 命名 | 沿用 P2 long 自增 | 一致性 + 跨 backend 单调 |
+| H2 | 真 E2E 范围 | 1 个 (publish doc → LLM 查 → rollback → LLM 再查, 验证 active 切换) | 沿用 P17 ChatClientServiceKbSearchE2ETest 风格 (单 E2E 覆盖全链路) |
+| X1 | Redis 存储 | 新 ZSET-per-doc (`rag:kb-doc-versions:{t}:{k}:{d}`) | 数量可控 + 按 doc 查询历史 |
+| J1 | 兼容性 | P2 port 不改, 加新 port `DocumentVersionService` (按 doc 维度) | 不污染 Phase 18 ship |
+| J2 | 检索路径 | `RetrievalAdapter` 新 overload `search(..., Map<String,Long> docVersionOverrides)` | 显式 override > 隐式 |
+| K1 | 真 LLM 路径 | 复用 P17 `OpenAiApi` 反射 + DeepSeek, env: `DEEPSEEK_API_KEY` | 一致性 |
+| K2 | E2E 跳过条件 | `@EnabledIfEnvironmentVariable("DEEPSEEK_API_KEY")` | CI 友好 |
+
+### 优先级链 (RetrievalAdapter.search)
+
+```
+caller override (Map<docId, versionId>)
+  ↓ win
+DocumentVersionService.resolveVersion(tenant, kb, docId, -1)
+  ↓ win
+KbVersionService.resolveVersion(tenant, kb, -1)  // Phase 18 P2
+  ↓ win
+pass-through kbVersion
+```
+
+### 已 ship (T1 → T6, HEAD `6dd7700`)
+
+| T# | 内容 | 行 | 文件 |
+|---|---|---|---|
+| T1 | rag-core port + record + exception | +352 | 3 |
+| T2 | 4 store impl (H2/MySQL/Jdbc abstract/Redis ZSET-per-doc) | +715 | 4 |
+| T3 | RetrievalAdapter 新 ctor + 新 overload + 优先级链 | +107 | 1 |
+| T4 | DocumentVersionTool (L2_WRITE) + Request/Response/Action | +200 | 4 |
+| T5 | DocumentVersionController REST (嵌套路径 /kb/{kbId}/docs/{docId}) | +150 | 1 |
+| T6 | 52 tests (H2 14 + Redis 17 + tool 10 + ctrl 5 + adapter E2E 5 + 真 LLM 1) + 2 impl bug fix | +2500 | 7 |
+| T7 | evolution.md P19 段 + Obsidian 归档 | +200 | 2 |
+| **总计** | | **+4224 行 / 22 文件, 4 commit** | |
+
+### REST API (嵌套路径, 跟 P2 区分)
+
+```
+GET  /api/agent/kb-versions/{kbId}/docs/{docId}
+GET  /api/agent/kb-versions/{kbId}/docs/{docId}/active
+POST /api/agent/kb-versions/{kbId}/docs/{docId}/publish
+```
+
+### Tool API
+
+```java
+doc_version_tool(action="LIST",        tenantId, kbId, docId)
+doc_version_tool(action="GET_ACTIVE",  tenantId, kbId, docId)
+doc_version_tool(action="PUBLISH",     tenantId, kbId, docId, versionId, sourceLabel?)
+doc_version_tool(action="ROLLBACK",    tenantId, kbId, docId, versionId)
+```
+
+### 关键坑 (后续 Phase 必看)
+
+1. **`git add -A` 禁** (P2 已踩, P19 仍坚持) — 走 explicit paths + 三确认
+2. **真 LLM E2E 的"降级断言"策略** — Plan §3.4 风险#6 命中: 真实 LLM 不可重复, 不强求必选某 tool. 断言重点: visibleToolCount + 链路不崩 + 3 次响应不全相同 (mock 切换有效).
+3. **RetrievalAdapter 的 service 调用次数** — `keepByDocVersion` 对每个 chunk 调一次 service (不按 docId short-circuit). 故意简单, 性能可后续 memoize. 测试用 `times(N)` 验证.
+4. **抽象 JdbcDocumentVersionService 测试发现 contract bug** — H2DocumentVersionServiceTest 第一次跑发现 `registerVersion` 缺 idempotent guard + `publish` idempotent 覆盖 publishedAt. 这两条与 P2 JdbcKbVersionService 行为一致, 但 Phase 19 写完没复检, H2 test 一跑就抓出来了. **教训: 任何子模块的 idempotent 行为, 必须有对应 test 验证, 不能依赖"我以为我写了"**.
+5. **subagent timeout** — Batch 2 (1 真 LLM E2E + 1 adapter E2E) 600s 超时, 只写了 adapter E2E, 真 LLM E2E 接手自己写. 教训: 真 LLM E2E 用 subagent 跑容易超时, 应拆分"模板 + 验证"两步, subagent 只写模板, 主 agent 跑真测试.
+
+### 真 LLM E2E 设计 (T6 关键)
+
+**目的**: 验证 publish → search 看到 v2 → rollback → search 看到 v1 全链路真实 LLM + 真 RetrievalPort mock (切换 active version).
+
+```
+test: rag-agent/.../integration/DocumentVersionRollbackE2ETest
+  @EnabledIfEnvironmentVariable(named = "DEEPSEEK_API_KEY", matches = ".+")
+
+场景 (1 @Test, 3 阶段断言):
+  Phase 1: active=v1 → LLM "退款规则?" → 响应含 "7 天无理由"
+  Phase 2: active=v2 → LLM "最新版的退款规则?" → 响应含 "15 天"
+  Phase 3: active=v1 (rollback) → LLM "我刚 rollback 了, 现在怎样?" → 响应含 "7 天"
+
+依赖: DEEPSEEK_API_KEY env, 走 OpenAiApi 反射注入 ChatClient
+时间预算: ~15-25s (3 次 LLM 调用)
+实测: 14.23s PASS
+```
+
+### 测试基线 (P19 末)
+
+| 模块 | 测试数 | 增量 (P2 → P19) |
+|---|---|---|
+| rag-core | 18 | - |
+| rag-pipeline | **195** | +19 (H2 service 14 + adapter E2E 5) |
+| rag-redis | **69** (23 skip) | +17 (Redis mock) |
+| rag-agent | **303** | +16 (tool 10 + ctrl 5 + 真 LLM 1) |
+| **总计** | **585** (7 真 DeepSeek E2E) | **+52 新, 0 fail, 0 skip (除 Redis container)** |
+
+### P19 → Phase 20 增量
+
+- Phase 19 之后: 文档级 rollback 工作; 真 LLM E2E 验证 active 切换影响 LLM 答案; 文档级跟 KB 级完全解耦.
+- Phase 20 待做: partial re-index (只重建一个 doc 的 chunks, 保留其他 doc 的 active version); 真 LLM E2E 走 controller (P19 ship 时只走 tool); DocumentVersionService 迁移到 rag-redis live 测试 (用 Testcontainers).
+- P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; P2 ship: HEAD `a990dec`; **P19 ship: HEAD `6dd7700`**; 远端 MATCH.
