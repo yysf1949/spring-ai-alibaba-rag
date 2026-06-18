@@ -108,18 +108,17 @@ public abstract class JdbcDocumentVersionService implements DocumentVersionServi
             try {
                 long existing = getActiveVersionNoCheck(tenantId, kbId, docId);
                 if (existing == versionId) {
-                    c.commit();
-                    // Re-mark published_at (idempotent re-publish).
+                    // Truly idempotent: do NOT overwrite published_at; only
+                    // fill in source_label if it was previously null.
                     try (PreparedStatement ts = c.prepareStatement(
-                            "UPDATE kb_doc_version SET published_at = ?, source_label = COALESCE(?, source_label) "
+                            "UPDATE kb_doc_version SET source_label = COALESCE(?, source_label) "
                           + "WHERE tenant_id = ? AND kb_id = ? AND doc_id = ? AND version_id = ?")) {
-                        ts.setTimestamp(1, Timestamp.from(now));
-                        if (sourceLabel == null) ts.setNull(2, Types.VARCHAR);
-                        else ts.setString(2, sourceLabel);
-                        ts.setString(3, tenantId);
-                        ts.setString(4, kbId);
-                        ts.setString(5, docId);
-                        ts.setLong(6, versionId);
+                        if (sourceLabel == null) ts.setNull(1, Types.VARCHAR);
+                        else ts.setString(1, sourceLabel);
+                        ts.setString(2, tenantId);
+                        ts.setString(3, kbId);
+                        ts.setString(4, docId);
+                        ts.setLong(5, versionId);
                         ts.executeUpdate();
                     }
                     c.commit();
@@ -230,6 +229,10 @@ public abstract class JdbcDocumentVersionService implements DocumentVersionServi
             throw new IllegalArgumentException("versionId must be non-negative, got " + versionId);
         }
         Instant now = Instant.now();
+        // Idempotent: if the row already exists, first registration wins.
+        if (versionExists(tenantId, kbId, docId, versionId)) {
+            return readSingle(tenantId, kbId, docId, versionId);
+        }
         String sql = "INSERT INTO kb_doc_version "
                    + "(tenant_id, kb_id, doc_id, version_id, status, created_at, published_at, chunk_count, source_label) "
                    + "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)";
