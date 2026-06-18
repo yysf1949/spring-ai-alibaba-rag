@@ -394,3 +394,100 @@ Multi-region:
 - 多轮对话历史（`MessageChatMemoryAdvisor` 集成）
 - RAG 检索问答（ChatClient + VectorStore 混搭）
 - 多 backend 切换（纯 OpenAI key / Azure OpenAI）
+
+---
+
+## Phase 16 — AgentController 双链路 + ChatClient SSE 流式 + 多轮对话 (2026-06-18)
+
+### 背景与目标
+
+Phase 15 ship 了 ChatClientService (blocking `chat()` 接口) 但未串到 HTTP 入口. 真实用户无法通过 HTTP 触发"用户发问题 → LLM 自动选 Tool" 的体验. Phase 16 解决 3 个缺口:
+
+1. `AgentController` 不接 ChatClient — 仅挂旧链路 `agentService.execute(ar)`
+2. 无 SSE 流式 — blocking `call()` 3-10 秒无进度反馈, UX 差
+3. 无多轮对话 — `chatClient.prompt()` 单次调用, 客户无法追问"再查第二个"
+
+### 交付物 (5 commit)
+
+| # | commit | 增量 |
+|---|---|---|
+| T1 | `2549cb1` | `ChatMemoryConfig` (InMemory repo + MessageWindowChatMemory M=20 + MessageChatMemoryAdvisor) |
+| T2 | `97ecc7c` | `ChatClientService.chatWithMemory()` + `stream()` + `ChatReply` record |
+| T3 | `3a414f4` | `AgentController /api/agent/chat` 双模式 endpoint (JSON + SSE) |
+| T4 | `d26f4a6` | 7 mock 测试 (MultiTurn 3 + ChatEndpoint 4) |
+| T5 | `f43166b` | 真实 DeepSeek Stream E2E (1 用例, `@EnabledIfEnvironmentVariable`) |
+
+### 关键设计决策
+
+1. **双 endpoint 平行, 不砍旧 `/invoke`**: Phase 11 ship 的单 tool 反射调用契约保留; Phase 16 新增 `/chat` 走 ChatClientService, Accept header 分流模式
+2. **多轮存储用 `InMemoryChatMemoryRepository` + `MessageWindowChatMemory(M=20)`**: 单 JVM 内 Map, 零依赖, 重启清空 — 够 demo. Phase 18 推 Redis 持久化 + tenantId 隔离
+3. **SSE 实现从 `Flux<ServerSentEvent<String>>` 改为 `SseEmitter` + `Flux.subscribe`**: 实测验证 Spring MVC 默认无 `FluxConcatArray + text/event-stream` converter (`HttpMessageNotWritableException`), `SseEmitter` 是官方推荐姿势. controller 返回类型 `Object` 同时容纳 `ResponseEntity<ChatReply>` 和 `SseEmitter`
+4. **`CONVERSATION_ID` 不是常量**: `MessageChatMemoryAdvisor` 1.0.9 没有 `CONVERSATION_ID` static 常量. `javap -c -constants BaseChatMemoryAdvisor` 硬证据显示 key 是字面量 `"chat_memory_conversation_id"` — 在 ChatClientService 内定义 `private static final String CONVERSATION_ID_KEY = "chat_memory_conversation_id"` 集中管理
+5. **ctx 默认 `permissive()`, Phase 17 推 stage header 解析**: governance 升级涉及 stage 升级策略 + 回调地址, 不是 1 行代码, 单独 Phase
+6. **SSE 路径无 `X-Conversation-Id` header**: `SseEmitter` 直接返回, 无法像 `ResponseEntity` 加 header. 改为通过 `done event` 的 data 字段 `{"conversationId":"sess-xxx"}` 透传, 客户端语义一致
+
+### 端点契约
+
+```
+POST /api/agent/chat HTTP/1.1
+X-Tenant-Id: t1                              # 必填
+X-Session-Id: sess-001                       # 可选, 不传则 server 生成 UUID
+Accept: text/event-stream                    # SSE 触发, 默认 application/json
+Content-Type: application/json
+
+{
+  "userId": "u1",
+  "message": "查我最近的订单"
+}
+
+→ JSON 模式: { "content": "...", "conversationId": "sess-001" } + X-Conversation-Id header
+→ SSE 模式:  data: <token>\n\n ... event:done\ndata:{"conversationId":"sess-001"}\n\n
+```
+
+### 测试基线
+
+| 模块 | Phase 15 | Phase 16 | 增量 |
+|---|---|---|---|
+| rag-agent | 213 PASS | **220 PASS** | +7 (MultiTurn 3 + ChatEndpoint 4) |
+| 真实 E2E | 1 (blocking) | **2** (blocking + stream) | +1 StreamE2E |
+
+### Plan 风险 vs 实际
+
+| Plan §6 风险 | 实际命中? | 解决 |
+|---|---|---|
+| `MessageChatMemoryAdvisor.CONVERSATION_ID` 常量名变动 | ✅ **命中** | `javap` 硬证据改用字面量 `"chat_memory_conversation_id"` |
+| `@WebMvcTest` 不装配 ChatClient → context fail | ✅ **命中** | `@MockBean ChatClientService` + `@MockBean AgentService` |
+| `Accept` 与 Spring content negotiation 冲突 | ❌ 未命中 | 简单 `text/event-stream` 字串判定可行 |
+| **未列出的新风险**: Spring MVC SSE converter | ✅ **新发现** | `Flux<ServerSentEvent<String>>` + `text/event-stream` 报 `No converter for FluxConcatArray`, 改 `SseEmitter` |
+
+### Plan §5 不做项 — 严格遵守
+
+- ❌ 不砍旧 `/invoke` (Phase 11 ship 契约保留, 实测 2/2 PASS)
+- ❌ 不接 RAG / VectorStore (Phase 17 推)
+- ❌ 不做 `X-Agent-Stage` header → ctx stage 映射 (Phase 17 governance)
+- ❌ 不做持久化 ChatMemory (Phase 18 Redis)
+- ❌ 不做多 LLM backend 切换 (Phase 17+)
+
+### 验证结果
+
+| 检查项 | 命令 | 结果 |
+|---|---|---|
+| 依赖 resolve | `mvn -pl rag-agent test-compile` | ✅ |
+| Mock 全测 | `mvn -pl rag-agent test` | ✅ **220 tests, 0 fail** (基线 213 + 7 新增) |
+| Stream Mock | `mvn test -Dtest=ChatClientServiceMultiTurnMockTest` | ✅ 3/3 PASS |
+| ChatEndpoint Mock | `mvn test -Dtest=AgentControllerChatEndpointTest` | ✅ 4/4 PASS |
+| 真实 DeepSeek Stream E2E | `DEEPSEEK_API_KEY=*** mvn test -Dtest=ChatClientServiceStreamE2ETest` | ✅ 1/1 PASS, 5.2s, Flux ≥3 chunks, 含"订单"相关词 |
+| 真实 DeepSeek blocking E2E | `mvn test -Dtest=ChatClientServiceE2ETest` | ✅ 1/1 PASS (Phase 15 baseline 保留) |
+| API key 未泄漏 | `git diff --cached \| grep sk-` | ✅ 空 |
+| 既有契约保留 | `mvn test -Dtest=AgentControllerTest` | ✅ 2/2 PASS (`/invoke` 路径无回归) |
+| rag-app baseline | (已知) ToolAuditBridge bean wiring 18 error | **与 Phase 16 无关, git stash 验证** (Phase 15 ship HEAD 上同样 fail) |
+| 远端 push + MATCH | `git push origin feature/agent-action-layer && git ls-remote origin feature/agent-action-layer` | T6 执行 |
+
+### Phase 16 不做（推迟到后续）
+
+- RAG 检索问答 (`ChatClient + VectorStore` 混搭) — **Phase 17 推**
+- `X-Agent-Stage` header → ctx stage 解析 — **Phase 17 governance**
+- 持久化 ChatMemory (Redis / JDBC) — **Phase 18**
+- 多 LLM backend 切换 (OpenAI / Claude / Qwen profile) — Phase 17+
+- ChatMemory 的 tenantId 隔离 — Phase 18
+- SSE 错误流结构化 (`event: error` with payload) — Phase 18
