@@ -290,4 +290,32 @@ Multi-region:
 
 **全仓库测试**：174 → **189**，0 fail（计划 +10，实际 +15：PaymentChannelTool 3 + RefundRuleTool 5 + RefundTool 集成 4 + DefaultAgentLoop 3）
 
-**下一阶段**：Phase 14（多渠道 Adapter — Feishu/Telegram/WeChat）/ Phase 15（E2E 真实 LLM 对话）选一
+**下一阶段**：Phase 14（P0 完善业务工具 + P1 动态工具授权）— 已开工
+
+## Phase 14 P0 — 完善 AI 客服业务工具（2026-06-18）
+
+对齐「路条编程」文章 §2 能力清单 11 项的剩余 gap。本期 P0 补齐 3 个 L1/L2 业务工具：
+
+| 模块 | 风险级 | 职责 | 文件 |
+|---|---|---|---|
+| **calculate_refund_amount** | L1_READ | 退款金额计算（基于规则 + 组合优惠 80% 分摊） | `builtin/RefundCalculatorTool.java` |
+| **send_notification** | L2_REVERSIBLE | 站内通知（5 模板白名单 + 500 字符上限 + 5 分钟去重） | `builtin/NotificationTool.java` + `port/NotificationRepositoryPort.java` + `store/InMemoryNotificationRepository.java` |
+| **get_member_benefits** | L1_READ | 会员权益（3 级会员 NORMAL/GOLD/PLATINUM + 等级折扣） | `builtin/MemberBenefitsTool.java` + `port/MemberProfileRepositoryPort.java` + `store/InMemoryMemberProfileRepository.java` |
+
+**关键决策**：
+- `calculate_refund_amount` 组合优惠按 80% 比例分摊（mock 规则，生产替换为财务系统）
+- `send_notification` 风险级 = L2 而非 L3：可重发可撤回，但不涉及资金/订单态
+- `send_notification` 5 分钟去重用 InMemory ConcurrentHashMap（生产换 Redis SET + EXPIRE）
+- `get_member_benefits` 3 级会员硬编码：NORMAL=0 / GOLD=1000 / PLATINUM=2000 cents
+- 3 个新工具不调用 Handoff（都是 L1/L2，不抛 `HandoffRequiredException`）
+- Port + InMemory 分层（沿用 Phase 11 既有契约，不动 5 个既有 port）
+
+**全仓库测试**：189 → **202**，0 fail（计划 +13，实际 +13：RefundCalculatorTool 4 + NotificationTool 5 + MemberBenefitsTool 4）
+
+**P0 不做（留给 P1 / Phase 15+）**：
+- 真实支付中台 / 物流 / 短信 SDK 接入（生产替换推迟）
+- 完整会员等级规则引擎（3 级硬编码足够演示）
+- Redis SET + EXPIRE 去重（InMemory 够 demo）
+- 真实通知渠道（短信/邮件/推送 SDK）
+
+**P1 待办**：动态工具授权层（`AuthorizationContext` + `ToolAuthorizer` + `StageAwareToolAuthorizer` + `SpringAiAgentAdapter` 改造）— 7 Task 第 5-7 步
