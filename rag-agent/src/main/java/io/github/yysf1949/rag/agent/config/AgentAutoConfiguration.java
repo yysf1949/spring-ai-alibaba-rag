@@ -1,6 +1,8 @@
 package io.github.yysf1949.rag.agent.config;
 
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
+import io.github.yysf1949.rag.agent.api.AgentChannel;
+import io.github.yysf1949.rag.agent.api.ChannelAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -8,6 +10,11 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Agent Action Layer 的启动钩子。
@@ -38,18 +45,28 @@ public class AgentAutoConfiguration {
 
     private final ApplicationContext ctx;
     private final ObjectProvider<ToolRegistry> registryProvider;
+    private final Map<AgentChannel, ChannelAdapter> adapters;
 
     public AgentAutoConfiguration(ApplicationContext ctx,
-                                  ObjectProvider<ToolRegistry> registryProvider) {
+                                  ObjectProvider<ToolRegistry> registryProvider,
+                                  List<ChannelAdapter> adapterList) {
         this.ctx = ctx;
         this.registryProvider = registryProvider;
+        this.adapters = adapterList.stream()
+                .collect(Collectors.toMap(ChannelAdapter::channel, a -> a));
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
         ToolRegistry registry = registryProvider.getObject();
         registry.scanFromContext(ctx);
-        log.info("AgentAutoConfiguration scan done — {} tool(s) ready: {}",
-                registry.listNames().size(), registry.listNames());
+        log.info("AgentAutoConfiguration scan done — {} tool(s) ready: {} ({} channel(s) ready: {})",
+                registry.listNames().size(), registry.listNames(),
+                adapters.size(), adapters.keySet());
+    }
+
+    /** Phase 11+ 用 — 现在只是预留入口, Phase 10 没有任何 caller 调它 */
+    public Optional<ChannelAdapter> adapterFor(AgentChannel channel) {
+        return Optional.ofNullable(adapters.get(channel));
     }
 }
