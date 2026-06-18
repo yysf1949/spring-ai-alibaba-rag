@@ -46,7 +46,7 @@ class KbSearchToolTest {
     }
 
     @Test
-    void kbVersionMinusOneTranslatedToZero() {
+    void kbVersionNegativePassedThroughToRetrievalPort() {
         RetrievalPort port = mock(RetrievalPort.class);
         when(port.search(anyString(), anyString(), anyLong(), anyString(), anyInt(), any()))
                 .thenReturn(List.of());
@@ -55,11 +55,12 @@ class KbSearchToolTest {
         tool.search(new KbSearchRequest(
                 "tenant1", "default", -1L, "x", 5, List.of()));
 
-        // 验证 RetrievalPort.search 收到的 effectiveKbVersion=0 (kbVersion=-1 已转 0)
+        // Phase 18 P2: KbSearchTool 不再做 -1 → 0 的转换. 透传 -1 给 RetrievalPort,
+        // 由 RetrievalAdapter 内部用 KbVersionService.resolveVersion 解析成具体 versionId.
         org.mockito.Mockito.verify(port).search(
                 org.mockito.ArgumentMatchers.eq("tenant1"),
                 org.mockito.ArgumentMatchers.eq("default"),
-                org.mockito.ArgumentMatchers.eq(0L),
+                org.mockito.ArgumentMatchers.eq(-1L),
                 org.mockito.ArgumentMatchers.eq("x"),
                 org.mockito.ArgumentMatchers.eq(5),
                 org.mockito.ArgumentMatchers.any());

@@ -30,10 +30,12 @@ import java.util.Objects;
  * <p>纯读操作, 不修改任何业务数据. Phase 14 authorizer 全 ctx 都过
  * (permissive / confirmed / awaitingConfirmation).</p>
  *
- * <h2>kbVersion 简化方案</h2>
- * <p>Phase 17 §3.3 — rag-core 还没有 KB version service, Request.kbVersion 用 long (默认 -1)
- * 表示"用最新已发布版本", tool 内部把 -1 转 0 (VectorStore.search 内部解析 0 = default version).
- * Phase 18 P2 加 KB version API 后替换.</p>
+ * <h2>kbVersion 简化方案 → Phase 18 P2 升级</h2>
+ * <p>Phase 17 §3.3: rag-core 还没有 KB version service, Request.kbVersion 用 long (默认 -1)
+ * 表示"用最新已发布版本", tool 内部把 -1 转 0 (VectorStore.search 内部解析 0 = default version).</p>
+ * <p>Phase 18 P2: 不再做 -1 → 0 的转换. KbSearchTool 透传 {@code request.kbVersion()} 给
+ * {@link RetrievalPort#search}, 由 {@code RetrievalAdapter} 内部统一通过
+ * {@code KbVersionService.resolveVersion} 解析 (跨 backend 一致). 默认 -1 行为不变.</p>
  */
 @Component
 @ConditionalOnBean(RetrievalPort.class)
@@ -55,13 +57,13 @@ public class KbSearchTool {
             idempotent = true)
     public KbSearchResponse search(KbSearchRequest request) {
         Objects.requireNonNull(request, "request");
-        // 简化方案: kbVersion = -1 → 0 (VectorStore.search 内部解析为 default version)
-        long effectiveKbVersion = request.kbVersion() < 0 ? 0L : request.kbVersion();
 
+        // Phase 18 P2: 透传 request.kbVersion(). RetrievalAdapter 内部统一处理
+        // -1 → active version (跨 backend 一致 via KbVersionService).
         List<RetrievedChunk> retrieved = retrievalPort.search(
                 request.tenantId(),
                 request.kbId(),
-                effectiveKbVersion,
+                request.kbVersion(),
                 request.query(),
                 request.topK(),
                 request.userPermissionTags());

@@ -1,9 +1,11 @@
 package io.github.yysf1949.rag.pipeline.port;
 
+import io.github.yysf1949.rag.core.exception.KbVersionNotFoundException;
 import io.github.yysf1949.rag.core.model.Chunk;
 import io.github.yysf1949.rag.core.model.PermissionMode;
 import io.github.yysf1949.rag.core.model.RetrievedChunk;
 import io.github.yysf1949.rag.core.port.EmbeddingGateway;
+import io.github.yysf1949.rag.core.port.KbVersionService;
 import io.github.yysf1949.rag.core.port.RetrievalPort;
 import io.github.yysf1949.rag.core.port.VectorStore;
 import org.slf4j.Logger;
@@ -16,10 +18,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@link RetrievalPort} 的 rag-pipeline 实现 — Phase 17 T2。
+ * {@link RetrievalPort} 的 rag-pipeline 实现 — Phase 17 T2 + Phase 18 P2。
  *
  * <h2>职责</h2>
  * <ol>
+ *   <li>调 {@link KbVersionService#resolveVersion} 解析 {@code kbVersion} (Phase 18 P2 新)
+ *       — 把 {@code -1} 翻译成"当前 active version", 校验指定版本存在</li>
  *   <li>调 {@link EmbeddingGateway#embedBatch(List)} 把 query 转向量（用单元素 list）</li>
  *   <li>调 {@link VectorStore#search} 取 topK 候选 chunk（多租户/kb/kbVersion/permissionTags 硬墙）</li>
  *   <li>从 query vector 与 chunk.embedding 重算 cosine similarity，归一化到 0-1 作为 {@code score}</li>
@@ -31,9 +35,12 @@ import java.util.Map;
  * 本 adapter 用 query vector 和 chunk.embedding 重算 cosine，再按
  * {@code (1 + cosine) / 2} 映射到 [0, 1]，保证 0=无关 / 1=完全相同。</p>
  *
- * <h2>kbVersion 语义</h2>
- * <p>{@code 0} 表示"用最新已发布版本"，由 {@link VectorStore} 实现解析。
- * KbSearchTool 在传入前会把 {@code -1} 转 {@code 0}。</p>
+ * <h2>kbVersion 语义 (Phase 18 P2 更新)</h2>
+ * <p>Phase 17: {@code 0} 表示"用最新已发布版本"，由 {@link VectorStore} 实现内部解析。</p>
+ * <p>Phase 18 P2: 把 active version 解析移到 {@link KbVersionService} Port 层, 跨 backend 一致
+ * (H2/MySQL/JDBC 用 SQL 表, Redis 复用 publishPointerKey + 元数据 hash).</p>
+ * <p>KbSearchTool 在传入前会把 {@code -1} 转成 {@code -1L}, adapter 内调 {@code resolveVersion}
+ * 翻译成具体 version id (≥0) 再透传给 {@link VectorStore#search}.</p>
  *
  * <h2>不做</h2>
  * <ul>
@@ -50,10 +57,29 @@ public class RetrievalAdapter implements RetrievalPort {
 
     private final VectorStore vectorStore;
     private final EmbeddingGateway embeddingGateway;
+    private final KbVersionService kbVersionService;
 
-    public RetrievalAdapter(VectorStore vectorStore, EmbeddingGateway embeddingGateway) {
+    /**
+     * Phase 18 P2 constructor — wires in {@link KbVersionService}.
+     *
+     * <p>{@code kbVersionService} is allowed to be {@code null} for backward
+     * compatibility with tests that hand-build a {@code RetrievalAdapter}
+     * without a full Spring context. When {@code null}, the adapter behaves
+     * exactly as it did pre-P2: pass {@code requested} through unchanged and
+     * rely on each backend's internal "0 = active" convention.</p>
+     */
+    public RetrievalAdapter(VectorStore vectorStore,
+                            EmbeddingGateway embeddingGateway,
+                            @org.springframework.beans.factory.annotation.Autowired(required = false)
+                            KbVersionService kbVersionService) {
         this.vectorStore = vectorStore;
         this.embeddingGateway = embeddingGateway;
+        this.kbVersionService = kbVersionService;
+    }
+
+    /** Legacy constructor — kept so unit tests that mock just (VectorStore, EmbeddingGateway) keep compiling. */
+    public RetrievalAdapter(VectorStore vectorStore, EmbeddingGateway embeddingGateway) {
+        this(vectorStore, embeddingGateway, null);
     }
 
     @Override
@@ -79,6 +105,23 @@ public class RetrievalAdapter implements RetrievalPort {
         }
         List<String> tags = userPermissionTags == null ? List.of() : userPermissionTags;
 
+        // Phase 18 P2: resolve kbVersion via KbVersionService when available.
+        // This gives us cross-backend consistent semantics for "use the active
+        // version" instead of relying on each backend's internal convention.
+        long effectiveVersion = kbVersion;
+        if (kbVersionService != null && kbVersion < 0) {
+            try {
+                effectiveVersion = kbVersionService.resolveVersion(tenantId, kbId, kbVersion);
+                log.debug("RetrievalAdapter: kbVersion {} -> effective {}", kbVersion, effectiveVersion);
+            } catch (KbVersionNotFoundException ex) {
+                // No active version → return empty result (consistent with
+                // KbNotFoundException semantics — caller will surface 200 + empty).
+                log.debug("RetrievalAdapter: no active version for tenant={} kb={}",
+                        tenantId, kbId);
+                return List.of();
+            }
+        }
+
         // 1. Embed query (use batch API, single element)
         List<float[]> vectors = embeddingGateway.embedBatch(List.of(query));
         if (vectors == null || vectors.isEmpty() || vectors.get(0) == null) {
@@ -98,14 +141,14 @@ public class RetrievalAdapter implements RetrievalPort {
                 queryVector,
                 tenantId,
                 kbId,
-                kbVersion,
+                effectiveVersion,
                 tags,
                 PermissionMode.AND,
                 topK);
 
         if (raw == null || raw.isEmpty()) {
             log.debug("RetrievalAdapter.search: no chunks (tenantId={}, kbId={}, kbVersion={})",
-                    tenantId, kbId, kbVersion);
+                    tenantId, kbId, effectiveVersion);
             return List.of();
         }
 
