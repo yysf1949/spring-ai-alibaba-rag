@@ -318,4 +318,35 @@ Multi-region:
 - Redis SET + EXPIRE 去重（InMemory 够 demo）
 - 真实通知渠道（短信/邮件/推送 SDK）
 
-**P1 待办**：动态工具授权层（`AuthorizationContext` + `ToolAuthorizer` + `StageAwareToolAuthorizer` + `SpringAiAgentAdapter` 改造）— 7 Task 第 5-7 步
+## Phase 14 P1 — 动态工具授权层（2026-06-18）
+
+对齐「路条编程」文章 §4 "工具不是越多越好, 权限也不是一次性全部交给模型"。实现 3 阶段渐进式授权:
+
+| 模块 | 文件 | 职责 |
+|---|---|---|
+| **AuthorizationContext** | `governance/AuthorizationContext.java` | 不可变 record, 5 字段 (identity/sessionId/allowedTools/maxRiskLevel/requiresConfirmation) + 3 工厂 (permissive/awaitingConfirmation/confirmed) |
+| **ToolAuthorizer** | `governance/ToolAuthorizer.java` | 接口 + 2 静态工具方法 (riskLevelAllowed/inWhitelist) |
+| **StageAwareToolAuthorizer** | `governance/StageAwareToolAuthorizer.java` | 默认实现 (@Component), 阶段 → 风险级 映射 (L2 max for awaiting, L3 max for confirmed) |
+| **SpringAiAgentAdapter** | `orchestration/SpringAiAgentAdapter.java` | 加 `getFunctionCallbacks(AuthorizationContext)` overload, 用 authorizer 过滤 callback 数组 |
+
+**关键决策**：
+- `AuthorizationContext.permissive()` = L3 max (无 ctx 退化路径, 向后兼容)
+- `awaitingConfirmation(identity)` = requiresConfirmation=true, max=null → StageAwareToolAuthorizer 用 `AWAITING_CONFIRMATION_MAX_RISK = L2` 默认
+- `confirmed(identity)` = requiresConfirmation=false, max=null → `CONFIRMED_MAX_RISK = L3`
+- L4 工具 (e.g. `approve_refund`) 任何阶段都不进入 callback 数组 — 走人工审批
+- Authorizer 跟 RiskGate 职责明确分工: Authorizer = pre-LLM (看到哪些), RiskGate = runtime (能否真执行)
+- 工具不在 registry → 视为 L4 + reject (防 Agent 注入未注册 tool)
+- AgentController / DefaultAgentLoop **不动** (Phase 10/13a/13b 已 ship, 避免回归) — P1 只动 SpringAiAgentAdapter, 等 Phase 15 E2E 真实 ChatClient 调用时再串 Controller
+
+**集成点**：
+- `SpringAiAgentAdapter.getFunctionCallbacks(ctx)` → `authorizer.authorizedTools(ctx, registry.listNames())` → 仅返回授权范围 tool 的 callback 数组
+- 测试验证: 6 个 tool 注入, awaitingConfirmation 阶段 callback 数 = 5 (屏蔽 L3 cancel_order), confirmed = 6
+- SpringAiAgentAdapter 构造签名: `(ToolRegistry)` → `(ToolRegistry, ToolAuthorizer)` — 2-arg 必传 authorizer
+
+**全仓库测试**：202 → **209**，0 fail（计划 +7，实际 +7：StageAwareToolAuthorizer 5 + SpringAiAgentAdapterDynamicAuth 2）
+
+**P1 不做（留给 Phase 15+）**：
+- AgentController 解析 `X-Agent-Stage` header（当前 controller 走 AgentService 不调 adapter, 真实 ChatClient 接入时再设计）
+- DefaultAgentLoop 集成 ctx（避免改已 ship 链路）
+- LLM 阶段识别（基于对话上下文判断 stage）— 需真实 LLM key
+- 反向授权撤销 / session 级 ctx 缓存
