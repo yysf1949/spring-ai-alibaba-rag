@@ -1,5 +1,6 @@
 package io.github.yysf1949.rag.agent.e2e;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.yysf1949.rag.agent.action.InMemoryToolRegistry;
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
 import io.github.yysf1949.rag.agent.api.AgentOutcome;
@@ -9,19 +10,23 @@ import io.github.yysf1949.rag.agent.builtin.InMemoryTicketRepository;
 import io.github.yysf1949.rag.agent.builtin.KbSearchTool;
 import io.github.yysf1949.rag.agent.builtin.TicketTool;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
+import io.github.yysf1949.rag.agent.governance.AgentMetrics;
 import io.github.yysf1949.rag.agent.governance.DefaultRiskGate;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
 import io.github.yysf1949.rag.agent.governance.RiskGate;
 import io.github.yysf1949.rag.agent.governance.ToolAuditBridge;
+import io.github.yysf1949.rag.agent.handoff.HandoffService;
+import io.github.yysf1949.rag.agent.handoff.HumanReviewQueue;
 import io.github.yysf1949.rag.agent.orchestration.AgentLoop;
 import io.github.yysf1949.rag.agent.orchestration.DefaultAgentLoop;
 import io.github.yysf1949.rag.core.model.Answer;
 import io.github.yysf1949.rag.core.model.AnswerSource;
+import io.github.yysf1949.rag.core.model.Query;
 import io.github.yysf1949.rag.core.port.LlmAuditHook;
 import io.github.yysf1949.rag.core.port.QAService;
-import io.github.yysf1949.rag.core.model.Query;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -45,11 +50,6 @@ import static org.mockito.Mockito.when;
  *   <li>风险门控：L2 缺 idempotencyKey 拒绝 + 审计 DENIED</li>
  *   <li>租户隔离：tenant2 不能看到 tenant1 的工单</li>
  * </ul>
- *
- * <p>注：本测试与 plan 文档的差异 — plan 写的 {@code Answer} 4 字段构造器 +
- * {@code Ticket} 类型断言是基于早期草稿；当前 rag-core {@code Answer} 是
- * 10 字段 record, {@code TicketTool.createReminder} 返回 {@code Response}
- * 而非 {@code Ticket}。本文件按实际 API 编写, 5 个用例的语义不变。</p>
  */
 class AgentEndToEndTest {
 
@@ -60,8 +60,6 @@ class AgentEndToEndTest {
     @BeforeEach
     void setUp() {
         QAService qa = mock(QAService.class);
-        // Answer 字段顺序: tenantId, queryHash, rewrittenQuery, retrieved,
-        //   reranked, finalText, citations, source, latencyMs, metrics
         when(qa.answer(any(Query.class))).thenReturn(new Answer(
                 "t1", "qh-stub", "怎么退款",
                 List.of(), List.of(),
@@ -83,7 +81,11 @@ class AgentEndToEndTest {
             ToolAuditBridge bridge = new ToolAuditBridge(hook);
             IdempotencyStore idem = ctx.getBean(InMemoryIdempotencyStore.class);
             RiskGate gate = new DefaultRiskGate();
-            agentService = new DefaultAgentLoop(registry, gate, idem, bridge);
+            AgentMetrics metrics = new AgentMetrics(new SimpleMeterRegistry());
+            HandoffService handoffService = new HandoffService(new HumanReviewQueue(), metrics);
+            ObjectMapper objectMapper = new ObjectMapper();
+            agentService = new DefaultAgentLoop(registry, gate, idem, bridge,
+                    metrics, handoffService, objectMapper);
         }
     }
 
@@ -124,10 +126,10 @@ class AgentEndToEndTest {
     @Test
     void l2MissingIdempotencyKeyDenied() {
         var identity = new AgentIdentity("t1", "u1", "s1", Set.of("user"));
-        try {
-            agentService.execute(AgentRequest.of(identity, "create_reminder_ticket",
-                    new TicketTool.Request("kb-search", "no key"), null));
-        } catch (RuntimeException ignored) { }
+        // Phase 10: execute() 返回 DENIED 而非抛异常
+        AgentResponse resp = agentService.execute(AgentRequest.of(identity, "create_reminder_ticket",
+                new TicketTool.Request("kb-search", "no key"), null));
+        assertThat(resp.outcome()).isEqualTo(AgentOutcome.DENIED);
         assertThat(auditOutcomes).contains("DENIED");
         assertThat(ticketRepo.findByTenant("t1")).isEmpty();
     }
