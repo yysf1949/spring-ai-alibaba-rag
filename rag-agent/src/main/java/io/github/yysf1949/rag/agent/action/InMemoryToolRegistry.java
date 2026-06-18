@@ -38,6 +38,7 @@ public class InMemoryToolRegistry implements ToolRegistry {
                         spec.riskLevel(),
                         spec.idempotent(),
                         spec.requiresIdempotencyKey(),
+                        spec.maxAmountCents() >= 0 ? spec.maxAmountCents() : null,
                         bean,
                         m);
                 desc.validate();

@@ -17,6 +17,7 @@ import java.lang.reflect.Method;
  * @param riskLevel      风险分级
  * @param idempotent     工具本身是否幂等
  * @param requiresIdempotencyKey 是否强制 idempotencyKey
+ * @param maxAmountCents L3 写操作工具的金额上限（分）；null/-1 表示不限
  * @param bean           Spring bean 实例
  * @param method         反射 Method（参数类型是业务侧 DTO，参数顺序由声明决定）
  */
@@ -26,6 +27,7 @@ public record ToolDescriptor(
         RiskLevel riskLevel,
         boolean idempotent,
         boolean requiresIdempotencyKey,
+        Long maxAmountCents,
         Object bean,
         Method method
 ) {

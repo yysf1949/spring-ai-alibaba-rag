@@ -57,8 +57,9 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
         long t0 = System.currentTimeMillis();
         ToolDescriptor desc = registry.get(request.toolName());
         try {
-            // 风险门控
-            riskGate.check(desc, request.identity(), request.idempotencyKey());
+            // 风险门控（L3 金额门控：L3 工具可传 requestedAmountCents，null 表示无金额概念）
+            Long amountCents = extractAmountCents(desc, request);
+            riskGate.check(desc, request.identity(), request.idempotencyKey(), amountCents);
         } catch (RuntimeException denied) {
             // 拒绝也写审计
             auditBridge.record(new ToolInvocationContext(
@@ -132,5 +133,33 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
         } catch (JsonProcessingException e) {
             return o.toString();
         }
+    }
+
+    /**
+     * 从工具入参中提取 amountCents（反射读"amountCents"或"amount"long 型字段）。
+     * L1 / 无金额字段的工具返回 null。
+     */
+    private Long extractAmountCents(ToolDescriptor desc, AgentRequest request) {
+        Object payload = request.requestPayload();
+        if (payload == null) return null;
+        try {
+            java.lang.reflect.Field amountCentsField = payload.getClass().getDeclaredField("amountCents");
+            amountCentsField.setAccessible(true);
+            Object v = amountCentsField.get(payload);
+            if (v instanceof Long l) return l;
+        } catch (NoSuchFieldException ignored) {
+            // try "amount" field next
+        } catch (IllegalAccessException e) {
+            log.warn("Failed to read amountCents from {}: {}", payload.getClass().getSimpleName(), e.getMessage());
+        }
+        try {
+            java.lang.reflect.Field amountField = payload.getClass().getDeclaredField("amount");
+            amountField.setAccessible(true);
+            Object v = amountField.get(payload);
+            if (v instanceof Long l) return l;
+        } catch (NoSuchFieldException | IllegalAccessException ignored) {
+            // no amount field
+        }
+        return null;
     }
 }

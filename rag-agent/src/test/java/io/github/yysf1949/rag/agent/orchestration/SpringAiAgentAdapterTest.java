@@ -19,7 +19,7 @@ class SpringAiAgentAdapterTest {
         // 用真实 InMemoryToolRegistry + 一个手动注册的 ToolDescriptor
         var registry = new InMemoryToolRegistry();
         Method m = FakeBean.class.getMethod("run", FakeBean.In.class);
-        var desc = new ToolDescriptor("fake_tool", "Fake tool", RiskLevel.L1_READ, true, false, new FakeBean(), m);
+        var desc = new ToolDescriptor("fake_tool", "Fake tool", RiskLevel.L1_READ, true, false, null, new FakeBean(), m);
         // 手动塞进 registry（不走 scan）
         var field = InMemoryToolRegistry.class.getDeclaredField("descriptors");
         field.setAccessible(true);
@@ -50,7 +50,7 @@ class SpringAiAgentAdapterTest {
             @SuppressWarnings("unchecked")
             var map = (Map<String, ToolDescriptor>) field.get(registry);
             Method m = FakeBean.class.getMethod("run", FakeBean.In.class);
-            map.put("fake_tool", new ToolDescriptor("fake_tool", "Fake", RiskLevel.L1_READ, true, false, new FakeBean(), m));
+            map.put("fake_tool", new ToolDescriptor("fake_tool", "Fake", RiskLevel.L1_READ, true, false, null, new FakeBean(), m));
         } catch (Exception e) { throw new RuntimeException(e); }
 
         var adapter = new SpringAiAgentAdapter(registry);

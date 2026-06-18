@@ -55,4 +55,10 @@ public @interface ToolSpec {
 
     /** 写操作是否强制要求 idempotencyKey（L2+ 推荐 true） */
     boolean requiresIdempotencyKey() default false;
+
+    /**
+     * L3 写操作工具的金额上限（分）。超过此金额必须转人工审批。
+     * 缺省 -1 表示不限。
+     */
+    long maxAmountCents() default -1L;
 }

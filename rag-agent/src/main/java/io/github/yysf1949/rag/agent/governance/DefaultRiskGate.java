@@ -2,6 +2,7 @@ package io.github.yysf1949.rag.agent.governance;
 
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolDescriptor;
+import io.github.yysf1949.rag.agent.exception.AmountLimitExceededException;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
 import org.springframework.stereotype.Component;
 
@@ -24,7 +25,8 @@ public class DefaultRiskGate implements RiskGate {
     private static final Set<String> ADMIN_ROLES = Set.of("admin", "system");
 
     @Override
-    public void check(ToolDescriptor descriptor, AgentIdentity identity, IdempotencyKey idemKey) {
+    public void check(ToolDescriptor descriptor, AgentIdentity identity,
+                      IdempotencyKey idemKey, Long requestedAmountCents) {
         RiskLevel level = descriptor.riskLevel();
         boolean hasAdminRole = identity.roles().stream().anyMatch(ADMIN_ROLES::contains);
 
@@ -49,6 +51,16 @@ public class DefaultRiskGate implements RiskGate {
         if (descriptor.requiresIdempotencyKey() && (idemKey.rawToken() == null || idemKey.rawToken().isBlank())) {
             throw new ToolRiskDeniedException(String.format(
                     "Tool [%s] requires idempotencyKey with non-blank token", descriptor.name()));
+        }
+
+        // Phase 10: L3 金额门控 — 超过 maxAmountCents 抛 AmountLimitExceededException
+        if (level == RiskLevel.L3_BUSINESS_STATE
+                && descriptor.maxAmountCents() != null
+                && descriptor.maxAmountCents() >= 0
+                && requestedAmountCents != null
+                && requestedAmountCents > descriptor.maxAmountCents()) {
+            throw new AmountLimitExceededException(
+                    descriptor.name(), requestedAmountCents, descriptor.maxAmountCents());
         }
     }
 }
