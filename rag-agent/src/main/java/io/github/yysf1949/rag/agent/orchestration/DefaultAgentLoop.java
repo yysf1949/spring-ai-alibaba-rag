@@ -12,6 +12,7 @@ import io.github.yysf1949.rag.agent.governance.RiskGate;
 import io.github.yysf1949.rag.agent.governance.ToolAuditBridge;
 import io.github.yysf1949.rag.agent.governance.ToolInvocationContext;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
+import io.github.yysf1949.rag.agent.api.AgentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -32,7 +33,7 @@ import java.util.List;
  * </ol>
  */
 @Component
-public class DefaultAgentLoop implements AgentLoop {
+public class DefaultAgentLoop implements AgentLoop, AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultAgentLoop.class);
 
