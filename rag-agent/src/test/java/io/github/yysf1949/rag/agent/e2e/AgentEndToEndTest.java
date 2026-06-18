@@ -2,6 +2,7 @@ package io.github.yysf1949.rag.agent.e2e;
 
 import io.github.yysf1949.rag.agent.action.InMemoryToolRegistry;
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
+import io.github.yysf1949.rag.agent.api.AgentOutcome;
 import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.builtin.InMemoryTicketRepository;
@@ -91,7 +92,7 @@ class AgentEndToEndTest {
         var identity = new AgentIdentity("t1", "u1", "s1", Set.of("user"));
         AgentResponse resp = agentService.execute(AgentRequest.of(identity, "kb_search",
                 new KbSearchTool.Request("t1", "u1", "怎么退款", Set.of(), 5, null), null));
-        assertThat(resp.outcome()).isEqualTo("SUCCESS");
+        assertThat(resp.outcome()).isEqualTo(AgentOutcome.SUCCESS);
         assertThat(auditOutcomes).contains("SUCCESS");
     }
 
@@ -101,7 +102,7 @@ class AgentEndToEndTest {
         var key = IdempotencyKey.of("t1", "u1", "s1", "create_reminder_ticket", "tok-E2E-1");
         AgentResponse resp = agentService.execute(AgentRequest.of(identity, "create_reminder_ticket",
                 new TicketTool.Request("kb-search", "kb 返回空结果，请人工"), key));
-        assertThat(resp.outcome()).isEqualTo("SUCCESS");
+        assertThat(resp.outcome()).isEqualTo(AgentOutcome.SUCCESS);
         TicketTool.Response r = (TicketTool.Response) resp.toolResponse();
         assertThat(r.ticketId()).startsWith("TKT-");
         assertThat(r.status()).isEqualTo("PENDING");

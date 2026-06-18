@@ -1,6 +1,7 @@
 package io.github.yysf1949.rag.agent.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.yysf1949.rag.agent.api.AgentOutcome;
 import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.api.AgentService;
@@ -30,7 +31,7 @@ class AgentControllerTest {
     void invokeReturns200() throws Exception {
         var kbResp = new KbSearchTool.Response("answer", io.github.yysf1949.rag.core.model.AnswerSource.LLM, java.util.List.of());
         when(agentService.execute(any(AgentRequest.class)))
-                .thenReturn(new AgentResponse("kb_search", "SUCCESS", kbResp, "ok", 12L));
+                .thenReturn(new AgentResponse("kb_search", AgentOutcome.SUCCESS, kbResp, "ok", 12L, null));
 
         String body = objectMapper.writeValueAsString(Map.of(
                 "userId", "u1",

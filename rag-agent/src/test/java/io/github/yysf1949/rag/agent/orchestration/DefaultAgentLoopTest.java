@@ -1,6 +1,7 @@
 package io.github.yysf1949.rag.agent.orchestration;
 
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
+import io.github.yysf1949.rag.agent.api.AgentOutcome;
 import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.builtin.InMemoryTicketRepository;
@@ -79,7 +80,7 @@ class DefaultAgentLoopTest {
                 new KbSearchTool.Request("t1", "u1", "怎么退款", Set.of(), 5, null),
                 null);
         AgentResponse resp = loop.execute(req);
-        assertThat(resp.outcome()).isEqualTo("SUCCESS");
+        assertThat(resp.outcome()).isEqualTo(AgentOutcome.SUCCESS);
         assertThat(resp.toolName()).isEqualTo("kb_search");
         assertThat(auditTrail).hasSize(1);
         assertThat(auditTrail.get(0).outcome()).isEqualTo("SUCCESS");

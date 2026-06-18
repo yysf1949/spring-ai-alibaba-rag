@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.yysf1949.rag.agent.action.ToolDescriptor;
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
+import io.github.yysf1949.rag.agent.api.AgentOutcome;
 import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
@@ -92,7 +93,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
 
         log.info("Agent tool [{}] completed outcome=SUCCESS latency={}ms",
                 request.toolName(), latency);
-        return new AgentResponse(request.toolName(), "SUCCESS", result, resultJson, latency);
+        return new AgentResponse(request.toolName(), AgentOutcome.SUCCESS, result, resultJson, latency, null);
     }
 
     private Object invokeWithInjection(ToolDescriptor desc, AgentRequest request) throws Exception {
