@@ -65,8 +65,9 @@ public class SpringAiAgentAdapter {
         List<FunctionToolCallback> out = new ArrayList<>(allowed.size());
         for (String name : allowed) {
             ToolDescriptor desc = registry.get(name);
-            // SpringAiFunctionImpl 把 JSON 字符串反序列化成工具方法的入参 DTO，再 invoke
-            SpringAiFunctionImpl fn = new SpringAiFunctionImpl(desc, objectMapper);
+            // SpringAiFunctionImpl 已是 Function<Object,Object> — Spring AI 1.0.9 内部反/序列化
+            SpringAiFunctionImpl fn = new SpringAiFunctionImpl(desc);
+            // inputType: 用 record 实际类型, Spring AI 用它反序列化 LLM JSON
             Type inputType = desc.method().getGenericParameterTypes()[0];
             FunctionToolCallback<?, ?> cb = FunctionToolCallback.builder(name, fn)
                     .description(desc.description())
@@ -96,20 +97,33 @@ public class SpringAiAgentAdapter {
         }
     }
 
-    /** Spring AI 1.0.9 {@code FunctionCallback} 需要的 Function impl — 单参数。 */
-    private record SpringAiFunctionImpl(ToolDescriptor descriptor, ObjectMapper mapper)
-            implements Function<String, String> {
+    /**
+     * Spring AI 1.0.9 {@code FunctionCallback} 需要的 Function impl.
+     *
+     * <h2>为什么是 {@code Function<Object, Object>} 而不是 {@code Function<String, String>}</h2>
+     * <p>Phase 18 P0 修 Spring AI 1.0.9 + KbSearchRequest 反序列化阻塞.</p>
+     * <p>{@code FunctionToolCallback.call(json)} 内部用 {@code JsonParser.fromJson(json, toolInputType)}
+     * 已经把 JSON 反序列化成实际 record (KbSearchRequest), 再调 fn. 所以 fn 的输入是 record 实例
+     * 不是 JSON 字符串. 输出 Spring AI 内部用 {@code toolCallResultConverter.convert(result, type)}
+     * 自己序列化, fn 只需返回真实 result 即可.</p>
+     *
+     * <p>如果 fn 声明为 {@code Function<String, String>}, Spring AI 1.0.9 的 lambda$builder$0
+     * 调 {@code fn.apply(input)} 时, 编译器插入的 checkcast 会把 record 强转成 String → ClassCastException.</p>
+     *
+     * <p>改 {@code Function<Object, Object>} 之后, Spring AI 拿到 record 实例直接传, fn.invoke
+     * 拿到 record 直接调工具, Spring AI 内部序列化结果, 全链路不再做 String 强转.</p>
+     */
+    private record SpringAiFunctionImpl(ToolDescriptor descriptor)
+            implements Function<Object, Object> {
 
         @Override
-        public String apply(String requestJson) {
-            ToolDescriptor desc = descriptor;
+        public Object apply(Object input) {
+            // input 已经被 Spring AI 1.0.9 FunctionToolCallback 反序列化成 record
+            // (via JsonParser.fromJson(json, toolInputType) — toolInputType 在 builder 设的)
             try {
-                Class<?> reqType = desc.method().getParameterTypes()[0];
-                Object req = mapper.readValue(requestJson, reqType);
-                Object result = desc.invoke(req);
-                return mapper.writeValueAsString(result);
+                return descriptor.invoke(input);
             } catch (Exception e) {
-                throw new RuntimeException("Function apply failed: " + e.getMessage(), e);
+                throw new RuntimeException("Tool invoke failed: " + e.getMessage(), e);
             }
         }
     }

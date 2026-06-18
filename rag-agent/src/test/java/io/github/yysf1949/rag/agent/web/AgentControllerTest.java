@@ -6,6 +6,8 @@ import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.api.AgentService;
 import io.github.yysf1949.rag.agent.builtin.KbSearchTool;
+import io.github.yysf1949.rag.agent.builtin.KbSearchRequest;
+import io.github.yysf1949.rag.agent.builtin.KbSearchResponse;
 import io.github.yysf1949.rag.agent.orchestration.ChatClientService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +35,7 @@ class AgentControllerTest {
 
     @Test
     void invokeReturns200() throws Exception {
-        var kbResp = new KbSearchTool.Response("default", "hi", 0, java.util.List.of());
+        var kbResp = new KbSearchResponse("default", "hi", 0, java.util.List.of());
         when(agentService.execute(any(AgentRequest.class)))
                 .thenReturn(new AgentResponse("kb_search", AgentOutcome.SUCCESS, kbResp, "ok", 12L, null));
 

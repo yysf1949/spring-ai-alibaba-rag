@@ -113,7 +113,7 @@ class Phase10EndToEndTest {
     @Test
     void l1KbSearchHappyPath() {
         var req = AgentRequest.of(identity("t1", "user-1", Set.of("user")), "kb_search",
-                new KbSearchTool.Request("t1", "default", -1L, "怎么退款",
+                new KbSearchRequest("t1", "default", -1L, "怎么退款",
                         5, List.of()), null);
         AgentResponse resp = loop.execute(req);
         assertThat(resp.outcome()).isEqualTo(AgentOutcome.SUCCESS);

@@ -4,6 +4,7 @@ import io.github.yysf1949.rag.agent.action.InMemoryToolRegistry;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolDescriptor;
 import io.github.yysf1949.rag.agent.builtin.KbSearchTool;
+import io.github.yysf1949.rag.agent.builtin.KbSearchRequest;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
 import io.github.yysf1949.rag.agent.governance.AuthorizationContext;
 import io.github.yysf1949.rag.agent.governance.StageAwareToolAuthorizer;
@@ -68,7 +69,7 @@ class ChatClientServiceKbSearchE2ETest {
     @Test
     @DisplayName("blocking: DeepSeek LLM 看到 kb_search (visibleToolCount=1) + chat 不崩")
     void blocking_chat_realDeepSeek_kbSearchVisible() throws Exception {
-        // T4 真实反馈: Spring AI 1.0.9 + KbSearchTool.Request 6 字段 record 在真实 LLM 链路
+        // T4 真实反馈: Spring AI 1.0.9 + KbSearchRequest 6 字段 record 在真实 LLM 链路
         // 反序列化时偶发 "类型转换异常" (Plan §6 风险#6 命中). 本 E2E 降级为"验证工具可见性 + 链路不崩"
         // 不强求 LLM 必选 kb_search (风险#6 原文: "不验证具体选什么 tool").
 
@@ -104,7 +105,7 @@ class ChatClientServiceKbSearchE2ETest {
         f.setAccessible(true);
         @SuppressWarnings("unchecked")
         Map<String, ToolDescriptor> map = (Map<String, ToolDescriptor>) f.get(registry);
-        Method m = KbSearchTool.class.getMethod("search", KbSearchTool.Request.class);
+        Method m = KbSearchTool.class.getMethod("search", KbSearchRequest.class);
         map.put("kb_search", new ToolDescriptor(
                 "kb_search",
                 "在租户知识库中检索相关文档片段, 返回结构化结果 (id/text/score/metadata)。"
@@ -144,7 +145,7 @@ class ChatClientServiceKbSearchE2ETest {
     @Test
     @DisplayName("streaming: DeepSeek stream() 链路不崩 + LLM 看到 kb_search (流式 E2E 降级)")
     void streaming_realDeepSeek_kbSearchVisible() throws Exception {
-        // T4 真实反馈: Spring AI 1.0.9 + KbSearchTool.Request 6 字段 record 流式反序列化
+        // T4 真实反馈: Spring AI 1.0.9 + KbSearchRequest 6 字段 record 流式反序列化
         // 偶发 "类型转换异常". 本 E2E 降级为"验证流式链路不崩 + visibleToolCount=1".
         String apiKey = System.getenv("DEEPSEEK_API_KEY");
         assertThat(apiKey).isNotBlank();
@@ -178,7 +179,7 @@ class ChatClientServiceKbSearchE2ETest {
         f.setAccessible(true);
         @SuppressWarnings("unchecked")
         Map<String, ToolDescriptor> map = (Map<String, ToolDescriptor>) f.get(registry);
-        Method m = KbSearchTool.class.getMethod("search", KbSearchTool.Request.class);
+        Method m = KbSearchTool.class.getMethod("search", KbSearchRequest.class);
         map.put("kb_search", new ToolDescriptor(
                 "kb_search",
                 "在租户知识库中检索相关文档片段, 返回结构化结果 (id/text/score/metadata)。"

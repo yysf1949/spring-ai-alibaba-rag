@@ -31,7 +31,7 @@ class KbSearchToolTest {
                 .thenReturn(List.of(chunk));
 
         var tool = new KbSearchTool(port);
-        var out = tool.search(new KbSearchTool.Request(
+        var out = tool.search(new KbSearchRequest(
                 "tenant1", "default", -1L, "怎么退款",
                 5, List.of()));
 
@@ -52,7 +52,7 @@ class KbSearchToolTest {
                 .thenReturn(List.of());
 
         var tool = new KbSearchTool(port);
-        tool.search(new KbSearchTool.Request(
+        tool.search(new KbSearchRequest(
                 "tenant1", "default", -1L, "x", 5, List.of()));
 
         // 验证 RetrievalPort.search 收到的 effectiveKbVersion=0 (kbVersion=-1 已转 0)
@@ -72,7 +72,7 @@ class KbSearchToolTest {
                 .thenReturn(List.of());
 
         var tool = new KbSearchTool(port);
-        var out = tool.search(new KbSearchTool.Request(
+        var out = tool.search(new KbSearchRequest(
                 "tenant1", "default", -1L, "无答案问题", 5, List.of()));
 
         assertThat(out.total()).isEqualTo(0);
@@ -90,7 +90,7 @@ class KbSearchToolTest {
                 .thenReturn(List.of(chunk));
 
         var tool = new KbSearchTool(port);
-        var resp = tool.search(new KbSearchTool.Request(
+        var resp = tool.search(new KbSearchRequest(
                 "tenant1", "default", -1L, "退款", 5, List.of()));
 
         // 验证顶层字段名 (Jackson 序列化顺序由 record 声明顺序决定)

@@ -10,6 +10,8 @@ import io.github.yysf1949.rag.agent.api.AgentOutcome;
 import io.github.yysf1949.rag.agent.api.AgentRequest;
 import io.github.yysf1949.rag.agent.api.AgentResponse;
 import io.github.yysf1949.rag.agent.builtin.KbSearchTool;
+import io.github.yysf1949.rag.agent.builtin.KbSearchRequest;
+import io.github.yysf1949.rag.agent.builtin.KbSearchResponse;
 import io.github.yysf1949.rag.agent.builtin.TicketTool;
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryTicketRepository;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
@@ -168,7 +170,7 @@ class DefaultAgentLoopTest {
     void executesToolByName() {
         var identity = new AgentIdentity("t1", "u1", "s1", Set.of("user"));
         var req = AgentRequest.of(identity, "kb_search",
-                new KbSearchTool.Request("t1", "default", -1L, "怎么退款", 5, List.of()),
+                new KbSearchRequest("t1", "default", -1L, "怎么退款", 5, List.of()),
                 null);
         AgentResponse resp = loop.execute(req);
         assertThat(resp.outcome()).isEqualTo(AgentOutcome.SUCCESS);
