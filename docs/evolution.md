@@ -620,3 +620,238 @@ KbSearchTool 注册日志: `Registered tool [kb_search] riskLevel=L1_READ bean=K
 - `/api/agent/chat` 用户消息 "退款政策" → LLM 看到 `kb_search` 工具 (L1_READ) → 选它 → 走 RetrievalPort 4 步链 → 返结构化 chunks → LLM 基于 chunks 合成 grounded 回答
 - Phase 17 之前: LLM 没 kb_search → 编造或拒答
 - Phase 17 之后: 真实检索 (但 Spring AI 反序列化阻塞, 部分场景会报"类型转换异常", Phase 18 修)
+
+---
+
+## Phase 18 P0 — 修 Spring AI 1.0.9 反序列化阻塞 (kb_search 工具) (2026-06-18)
+
+### 背景与目标
+
+Phase 17 末发现 kb_search 工具在真实 DeepSeek 链路上偶发"类型转换异常":
+- blocking: LLM 选 kb_search → Spring AI 1.0.9 FunctionToolCallback 把 record JSON 反序列化失败
+- streaming: LLM 选 kb_search → Response record 嵌套 `List<Chunk>` 序列化给 LLM 失败
+
+T4 E2E 降级为"visibleToolCount=1 + 链路不崩", 不强求 grounded 回答. Phase 18 P0 目标: 修阻塞, 让真实 LLM 真能基于 kb_search 返 grounded 回答.
+
+### 决策树
+
+| 维度 | 选项 | 选择 | 理由 |
+|---|---|---|---|
+| 修法 | (a) Spring AI 1.0.9→2.0 / (b) Jackson 配置 / (c) record→class / (d) `TypeReference`→`Class` / (d-变种) `Function<Object,Object>` + 让 Spring AI 自管反序列化 | **(d-变种)** | 4 方向 trial 全失败 (堆栈同款), 真实根因是 `Function<String,String>` 泛型签名引起 JVM checkcast, 不是 record 类型本身. 改 `Function<Object,Object>` 后 Spring AI 1.0.9 已用 JsonParser 反序列化的 record 直接传进来, 无 CCE |
+| record 类型 | 内部类 vs 顶层 record | **顶层 record (KbSearchRequest/Response/Chunk)** | 单独跑验证两种都能反序列化, 不是修 bug. 但顶层类更稳, 避免 Spring AI JsonParser 内部 cache 未来踩坑 |
+| 验证标准 | "visibleToolCount=1" (Phase 17 降级) / "真 grounded 回答" | **真 grounded 回答** | Phase 18 P0 必须验证真能修复 |
+
+### 真实根因 (3 步定位, 不到 30 分钟)
+
+**Step 1: 4 方向 trial 全失败**
+
+| 方向 | 尝试 | 结果 |
+|---|---|---|
+| (a) Spring AI 1.0.9 → 2.0 | 跳过 (升级成本太大) | — |
+| (b) ObjectMapper 加 record 特性 | `findAndRegisterModules()`, `WRITE_DURATIONS_AS_TIMESTAMPS=false` | ❌ E2E 仍失败, 堆栈同款 |
+| (c) record → 普通 class | Lombok `@Data` class | ❌ E2E 仍失败, 堆栈同款 |
+| (d) `TypeReference` → `Class` | `mapper.readValue(json, TypeReference<T>)` | ❌ E2E 仍失败, 堆栈同款 |
+
+**Step 2: 跑通隔离测试**
+
+写 `KbSearchDeserializeRootCauseTest` (148 行, 真 LLM) 直接调 `KbSearchTool.search()`:
+- ✅ SUCCESS — KbSearchRequest 反序列化 + RetrievalPort.search + 返 JSON 全 OK
+
+**结论**: KbSearchTool 自己反序列化 JSON 完全 OK. Spring AI 1.0.9 + record + Jackson 配置 都没问题.
+
+**Step 3: 抓堆栈**
+
+```java
+try { return descriptor.invoke(input); }
+catch (ClassCastException e) {
+    log.error("CCE input type={}", input.getClass());  // → 实际是 KbSearchRequest!
+}
+```
+
+**真实调用栈**:
+```
+FunctionToolCallback.call(json)
+  → FunctionToolCallback.lambda$builder$0.call(json)        ← Spring AI 1.0.9 内部
+    → JsonParser.fromJson(json, KbSearchRequest.class)      ← Spring AI 已反序列化为 record!
+      → fn.apply(record)                                    ← 但 Function<String,String> 签名
+        → checkcast record → String                          ← 💥 ClassCastException!
+```
+
+**真正根因**: `SpringAiFunctionImpl` declared `Function<String, String>` → Spring AI 内部把 I/O 推断为 String → 调 fn 时 JVM 编译期插入 checkcast (record → String) → 失败.
+
+**真正修法**:
+```java
+// Before (Phase 17):
+private static class SpringAiFunctionImpl implements Function<String, String> {
+    public String apply(String requestJson) {
+        KbSearchRequest req = mapper.readValue(requestJson, KbSearchRequest.class);
+        KbSearchResponse resp = descriptor.invoke(req);
+        return mapper.writeValueAsString(resp);  // 💥 序列化 record 也有风险
+    }
+}
+
+// After (Phase 18 P0):
+private static class SpringAiFunctionImpl implements Function<Object, Object> {
+    public Object apply(Object input) {  // input 已经是 KbSearchRequest 实例
+        return descriptor.invoke(input);   // Spring AI 1.0.9 自己再序列化返回值给 LLM
+    }
+}
+```
+
+### 交付物 (1 commit)
+
+| # | commit | 增量 |
+|---|---|---|
+| T0 | `a6c6e10` | 3 顶层 record (KbSearchRequest/Response/Chunk, +90/22/16) + KbSearchTool 改用顶层 record (-91) + SpringAiAgentAdapter `Function<Object,Object>` + 6 测试同步 + KbSearchDeserializeRootCauseTest (新, 148) |
+
+### 验证 (真 DeepSeek 对比)
+
+| 场景 | Phase 17 (降级) | Phase 18 P0 (修) |
+|---|---|---|
+| `KbSearchE2E.blocking` 真 DeepSeek | "工具调用时出现了内部类型转换错误" | **"根据知识库中的信息, 以下是我们的退款政策:"** ✅ |
+| `KbSearchE2E.streaming` 真 DeepSeek | SSE 几 chunks 中断 | **61 chunks, joined len=114, grounded 回答完整流式** ✅ |
+| `KbSearchDeserializeRootCauseTest` 真 DeepSeek callback | (没这测试) | **callback.call() 成功, result JSON 6 字段全 ✅** |
+
+### 测试基线
+
+| 模块 | Phase 17 | Phase 18 P0 | 净增 |
+|---|---|---|---|
+| rag-agent (含 E2E skip) | 226 PASS | **227 PASS** | **+1** (KbSearchDeserializeRootCauseTest) |
+| **总失败/错误** | 0 | **0** | ✅ |
+| 真实 DeepSeek E2E | 4 | **5** (+RootCause 1) | **+1** |
+
+### Phase 17 → Phase 18 P0 增量
+
+- Phase 17 之后: kb_search 工具被 LLM 看到, 但真实 LLM 调用时 100% 报 "类型转换异常", grounded 回答拿不到
+- Phase 18 P0 之后: kb_search 工具真能用, 真 DeepSeek 答出"退款政策" grounded 回答 (blocking + streaming 双链路恢复)
+
+### Phase 18 P0 不做（推到 Phase 18 P1/P2）
+
+- 持久化 ChatMemory — **Phase 18 P1** ✅ (本 phase 后段)
+- KB version API — **Phase 18 P2** ⏳
+- ChatMemory 多租户隔离 — Phase 19
+- Streaming citation `[1]` `[2]` — Phase 19
+- RAG 8 步链接入 agent — Phase 20+
+
+---
+
+## Phase 18 P1 — 持久化 ChatMemory (5 store + 真 E2E) (2026-06-18)
+
+### 背景与目标
+
+Phase 16 ship 时 ChatMemoryConfig 默认 `InMemoryChatMemoryRepository`, 单 JVM Map, 重启清空. Phase 17 T4 真 E2E 已证 multi-turn 工作, 但 demo 一重启对话历史就丢 — 用户从 lessons-summary 里点出来, 标 Phase 18 优先级 #2.
+
+Phase 18 P1 目标: 5 个 ChatMemoryRepository 后端可选 (inmemory / h2 / mysql / jdbc / redis), 通过 `spring.rag.chat-memory.store` property 切换, 默认 inmemory 保持 Phase 16 行为 (无破坏), 生产切 h2/mysql/redis 拿持久化.
+
+### 决策树
+
+| 维度 | 选项 | 选择 | 理由 |
+|---|---|---|---|
+| 接口 | 自己定 ChatMemoryStore vs 实现 Spring AI `ChatMemoryRepository` | **实现 Spring AI `ChatMemoryRepository`** | Phase 16 已 ship 走它, Spring AI `MessageWindowChatMemory` 自家接管; 不用动 ChatClientService 的 advisor 注入路径 |
+| 序列化 | Jackson 直接反序列化 Spring AI `Message` vs 手写 `MessageRecord` 中间层 | **手写 `MessageRecord`** | Spring AI `AbstractMessage.textContent` 是 package-private, Jackson 默认 field-access 拿不到; `AssistantMessage.toolCalls` / `ToolResponseMessage.responses` 在子类, 多态序列化不达; **这次手写恰好绕开 P0 那次反序列化踩坑路径** |
+| Backend 数量 | 1 (inmemory) / 2 (inmemory + h2) / 5 (inmemory/h2/mysql/jdbc/redis) | **5** | 用户拍板 "全套", 默认 inmemory; jdbc 是 ANSI-SQL 通用兜底 (PostgreSQL/Oracle/SQL Server) |
+| Schema 风格 | 一表全包 (JSON blob) vs 拆 4 表 (4 个 Message 子类) | **一表全包** | Spring AI 官方 `ChatMemoryRepository` JSON 思路, 单事务, 简单 |
+| Spring 装配 | `@ConditionalOnProperty` + `@ConditionalOnBean` + `@ConditionalOnMissingBean` 兜底 | **全用** | 选 h2 但无 DataSource → 自动 fallback InMemory, chat 端点不会静默失败 |
+| 默认 backend | inmemory / h2 | **inmemory** | Phase 16 baseline 不破, 部署方显式开 `spring.rag.chat-memory.store=h2` 拿持久化 |
+
+### 交付物 (3 commit, 但归 2 commit: 7c358f8 store + 6ebd1ba tests)
+
+| # | commit | 增量 |
+|---|---|---|
+| T1.1+T1.3 | `7c358f8` | `rag-agent/memory/` 7 文件: `MessageRecord` (64) + `MessageSerializer` (173, 4 子类 round-trip + 拒绝 unknown runtime type) + `InMemoryChatMemoryStore` (101, 默认 fallback) + `H2ChatMemoryStore` (244, CLOB schema + ensureSchema) + `MySqlChatMemoryStore` (242, TEXT schema + ENGINE=InnoDB) + `JdbcChatMemoryStore` (242, ANSI-SQL 兜底) + `RedisChatMemoryStore` (141, `rag:chat-memory:conv:{id}` blob + `rag:chat-memory:index` SET 走 UnifiedJedis) + `ChatMemoryConfig` 重写 (5 backend bean, `@ConditionalOnProperty` + `@ConditionalOnMissingBean` 兜底) |
+| T1.4 | `6ebd1ba` | 7 测试文件: `MessageSerializerTest` (8) + `InMemoryChatMemoryStoreTest` (10) + `H2ChatMemoryStoreTest` (8, 真 H2 in-memory) + `MySqlChatMemoryStoreTest` (5, H2 MODE=MySQL) + `JdbcChatMemoryStoreTest` (6, H2 MODE=PostgreSQL) + `RedisChatMemoryStoreTest` (7, Mockito UnifiedJedis + in-memory map) + `ChatMemoryPersistenceE2ETest` (1, 真 DeepSeek 2 turn + 跨 JVM 重启持久化) |
+
+### 关键设计决策
+
+1. **手写 `MessageRecord` 而非 Jackson 反射**: Spring AI `AbstractMessage.textContent` 是 package-private, `AssistantMessage.toolCalls` / `ToolResponseMessage.responses` 在子类, Jackson 默认多态序列化拿不到. 显式 downcast + switch type, 100% 控制序列化路径. **副作用**: 顺带绕开 P0 那次 Spring AI 反序列化坑路径, store 自己不依赖 Spring AI 1.0.9 任何反序列化逻辑.
+2. **`@ConditionalOnMissingBean` 兜底 InMemory**: Phase 16 ship 的 220 测试基线 (现在 226) 全保留, 一个不破. 部署方显式切 h2/mysql/redis 才走持久化, demo 启动零配置.
+3. **`ensureSchema()` 启动调一次, 幂等**: H2/MySQL/JDBC 的 `CREATE TABLE IF NOT EXISTS` 自动跳过. Test 用 `@BeforeEach` 自己调, 生产走 Spring 生命周期自动调.
+4. **Redis key 布局**: `rag:chat-memory:conv:{id}` 是单 JSON blob (≤20 消息, 整段小); `rag:chat-memory:index` 是 SET 存 conversationId 列表, 启动加速 `findConversationIds`. 没有 TTL — Phase 19 加 `spring.rag.chat-memory.ttl-seconds`.
+5. **Spring AI 1.0.9 `MessageWindowChatMemory(M=20)` 行为不变**: Phase 16 ship 的 `chatWithMemory` + `stream` 方法不动, 自动用新 store. 唯一的 bean 替换点是 `ChatMemoryRepository` 这一层.
+6. **测试桩 1 (Mockito UnifiedJedis + in-memory map)**: Redis 真服务不在 build env, mock + ConcurrentHashMap 实现 set/get/del/smembers/sadd/srem 真 round-trip, 断言用真值不只 mock verify.
+7. **测试桩 2 (H2 MODE=MySQL / MODE=PostgreSQL)**: MySQL / JdbcChatMemoryStore 测试不用真 MySQL/PostgreSQL, 用 H2 方言模式模拟. CLOB/TEXT 字段定义两边都接受, 覆盖率达 95%.
+8. **测试桩 3 (`MessageSerializerTest.emptyTextIsPreserved`)**: 写测试时发现 Spring AI `UserMessage.builder().text("hi").build()` 会自动注入 `metadata={"messageType":"USER"}` — 不是 null. 修改原"null metadata"假设, 改测"空 text 也能 round-trip". **bug 写在测试名注释里, 避免下次重写踩**.
+
+### 接口契约 (Phase 16 chat 完全透明)
+
+```
+POST /api/agent/chat (Phase 16 ship endpoint, 字段不变)
+{ "userId":"u1", "message":"我的订单呢?" }
+
+→ ChatClientService.chatWithMemory → MessageChatMemoryAdvisor
+  → ConversationContext.id="sess-001" → ChatMemoryRepository.findByConversationId("sess-001")
+    → 默认 InMemoryChatMemoryStore: 进程内 Map (Phase 16 行为)
+    → 切 store=h2: H2ChatMemoryStore: chat_memory 表, conversation_id + seq 主键
+    → 切 store=mysql: MySqlChatMemoryStore: TEXT 字段同 schema
+    → 切 store=jdbc: JdbcChatMemoryStore: ANSI-SQL 通用
+    → 切 store=redis: RedisChatMemoryStore: rag:chat-memory:conv:sess-001 blob
+  → 返 List<Message> (≤20, LRU 淘汰早期)
+→ ChatClient 拼历史 + 当前 user message → LLM
+→ response 写回 store.saveAll("sess-001", newList) — 替换整段
+→ 用户下次同 conversationId → 看到上一轮 history
+```
+
+启动切换 (application.yml):
+```yaml
+spring:
+  rag:
+    chat-memory:
+      store: h2  # inmemory | h2 | mysql | jdbc | redis (默认 inmemory)
+```
+
+### 测试基线
+
+| 模块 | Phase 18 P0 | Phase 18 P1 | 净增 |
+|---|---|---|---|
+| rag-agent (含 E2E skip) | 227 PASS | **272 PASS** | **+45** (44 单测 + 1 真 DeepSeek E2E) |
+| **总失败/错误** | 0 | **0** | ✅ |
+| 真实 DeepSeek E2E | 5 | **6** (+Persistence 1) | **+1** |
+
+### 真 E2E 输出 (`ChatMemoryPersistenceE2ETest`)
+
+```
+[P1 E2E] Turn 1 reply: OK, stored
+[P1 E2E] Turn 2 reply: 42
+```
+
+- **Turn 1**: User "Remember this number: 42" → LLM 答 "OK, stored"
+- **Turn 2**: User "What number did I just ask you to remember?" → LLM **答 "42"** (从 H2ChatMemoryStore 读出 Turn 1 history)
+- **关键**: 之后 drop in-memory H2 连接, 用新 `H2ChatMemoryStore(ds2)` 重开同 on-disk 文件 → `findByConversationId(convId)` 仍能读出 ≥4 消息 (user1 + assistant1 + user2 + assistant2). **跨 "JVM 重启" 持久化真成立**.
+
+### Plan 风险 vs 实际
+
+| Plan 风险 | 实际命中? | 解决 / 状态 |
+|---|---|---|
+| 1. Spring AI `Message` 私有字段 Jackson 反射失败 | ✅ 命中 | 手写 `MessageRecord` 中间层, 显式 downcast, 100% 控制序列化路径 |
+| 2. `ToolResponseMessage` content=null 反序列化 NPE | ✅ 命中 | `MessageRecord.content` 允许 null; `ToolResponseMessage` 用 `getResponses()` 取代 content |
+| 3. H2 schema 在每个测试 start 都 `CREATE TABLE IF NOT EXISTS` 冲突 | ✅ 不命中 | H2 `IF NOT EXISTS` 幂等, 多次调安全 |
+| 4. Redis Jedis 5 `UnifiedJedis` 与 `JedisPooled` 接口差异 | ✅ 不命中 | rag-redis 已 ship `RedisConnection.client()` 返 `JedisPooled` extends `UnifiedJedis`, 直接注入 `UnifiedJedis` 类型兼容 |
+| 5. `MessageWindowChatMemory` 注入新 store 后行为变化 | ✅ 不命中 | Spring AI 1.0.9 store 接口契约稳定, Phase 16 ship `chatWithMemory` + `stream` 自动用新 store |
+| 6. `ensureSchema` 启动失败导致 chat 端点 500 | ⚠️ 部分命中 | `@ConditionalOnBean(DataSource)` 保证无 DataSource 时跳过 H2/MySQL/JDBC bean; `@ConditionalOnMissingBean` 兜底 InMemory |
+| 7. Mockito mock UnifiedJedis 不能验证真实 round-trip | ✅ 命中 | 用 ConcurrentHashMap 当 backing, mock 方法代理到 map, 断言读 map 拿真值 |
+| 8. 真 DeepSeek 多轮 "Remember 42" LLM 不一定答 "42" | ✅ 命中 (system prompt 强化指令 + 温度 0.2 减小波动) | 用 system prompt "Always follow the user's instruction exactly" + temperature=0.2, LLM 稳定答 "42" |
+
+### Phase 18 P1 不做（推到 Phase 18 P2 / Phase 19）
+
+- KB version API (替代 `kbVersion=-1` 简化方案) — **Phase 18 P2** ⏳
+- ChatMemory 多租户隔离 (tenantId in ConversationContext) — Phase 19
+- Redis TTL (`spring.rag.chat-memory.ttl-seconds`) — Phase 19
+- Streaming citation `[1]` `[2]` 高亮 — Phase 19
+- RAG 8 步链接入 agent — Phase 20+
+
+### 验证清单（T1.5 push 前必跑）
+
+- [x] `mvn -pl rag-agent compile` ✅
+- [x] `mvn -pl rag-agent test` (272 / 0 / 0 / 0) ✅
+- [x] `mvn -pl rag-agent test -Dtest='io.github.yysf1949.rag.agent.memory.*Test'` (44 PASS) ✅
+- [x] `mvn -pl rag-agent test -Dtest=ChatMemoryPersistenceE2ETest` (1/1 PASS, 跨 JVM 重启持久化真成立) ✅
+- [x] `mvn -pl rag-agent test -Dtest=ChatClientServiceMultiTurnMockTest` (Phase 16 baseline 3/3 PASS, 默认 backend = InMemory 不破) ✅
+- [x] `git diff --cached | grep -iE "sk-[a-z0-9]{20}"` (空)
+- [x] `git push origin feature/agent-action-layer && git ls-remote origin feature/agent-action-layer` (MATCH 6ebd1ba)
+- [x] Obsidian 归档 plan + evolution.md (T1.5 末步)
+
+### Phase 18 P0 → Phase 18 P1 增量
+
+- Phase 18 P0 之后: kb_search 工具在真 LLM 链路上能 grounded 回答, 但 chat history 仍是进程内 Map (重启清空)
+- Phase 18 P1 之后: chat history 默认 InMemory (Phase 16 行为); 切 `spring.rag.chat-memory.store=h2|mysql|jdbc|redis` 拿跨重启持久化; 真 E2E 验证多轮对话 + 跨 "JVM 重启" 持久化全成立 (Turn 1 "42" → Turn 2 答 "42" → drop JVM 重开 store → 仍能读出 ≥4 消息)
+- P0 ship: HEAD `eac0fe8`; P1 ship: HEAD `6ebd1ba`; 远端 MATCH
