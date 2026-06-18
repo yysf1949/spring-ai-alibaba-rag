@@ -46,6 +46,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -98,15 +101,16 @@ class DefaultAgentLoopTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        QAService qa = mock(QAService.class);
-        when(qa.answer(any(Query.class))).thenReturn(new Answer(
-                "t1", "qh", "怎么退款",
-                List.of(), List.of(),
-                "退款政策：7 天无理由", List.of(),
-                AnswerSource.LLM, 0L, java.util.Map.of()));
+        // Phase 17: KbSearchTool 改用 RetrievalPort (不再依赖 QAService 8 步链)
+        var port = mock(io.github.yysf1949.rag.core.port.RetrievalPort.class);
+        when(port.search(anyString(), anyString(), anyLong(), anyString(), anyInt(), any()))
+                .thenReturn(java.util.List.of(
+                        new io.github.yysf1949.rag.core.model.RetrievedChunk(
+                                "c-stub", "退款政策：7 天无理由", 0.95,
+                                "default", 1L, java.util.Map.of())));
 
         try (var ctx = new AnnotationConfigApplicationContext()) {
-            ctx.registerBean(QAService.class, () -> qa);
+            ctx.registerBean(io.github.yysf1949.rag.core.port.RetrievalPort.class, () -> port);
             ctx.register(KbSearchTool.class, TicketTool.class, InMemoryTicketRepository.class,
                     InMemoryIdempotencyStore.class, DefaultRiskGate.class,
                     io.github.yysf1949.rag.agent.action.InMemoryToolRegistry.class);
@@ -164,7 +168,7 @@ class DefaultAgentLoopTest {
     void executesToolByName() {
         var identity = new AgentIdentity("t1", "u1", "s1", Set.of("user"));
         var req = AgentRequest.of(identity, "kb_search",
-                new KbSearchTool.Request("t1", "u1", "怎么退款", Set.of(), 5, null),
+                new KbSearchTool.Request("t1", "default", -1L, "怎么退款", 5, List.of()),
                 null);
         AgentResponse resp = loop.execute(req);
         assertThat(resp.outcome()).isEqualTo(AgentOutcome.SUCCESS);

@@ -33,7 +33,7 @@ class AgentControllerTest {
 
     @Test
     void invokeReturns200() throws Exception {
-        var kbResp = new KbSearchTool.Response("answer", io.github.yysf1949.rag.core.model.AnswerSource.LLM, java.util.List.of());
+        var kbResp = new KbSearchTool.Response("default", "hi", 0, java.util.List.of());
         when(agentService.execute(any(AgentRequest.class)))
                 .thenReturn(new AgentResponse("kb_search", AgentOutcome.SUCCESS, kbResp, "ok", 12L, null));
 
