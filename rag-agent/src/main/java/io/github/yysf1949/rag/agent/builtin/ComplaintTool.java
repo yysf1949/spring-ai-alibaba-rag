@@ -42,8 +42,8 @@ public class ComplaintTool {
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = true,
             requiresIdempotencyKey = true,
-            maxAmountCents = -1L,
-            requiresConfirmationToken = true
+            requiresConfirmationToken = true,
+            maxAmountCents = -1L  // 投诉工单无金额限制
     )
     public ComplaintResponse createComplaint(IdempotencyKey idempotencyKey, ComplaintRequest req) {
         // 幂等检查 — use sentinel to distinguish "in-progress" from "completed"

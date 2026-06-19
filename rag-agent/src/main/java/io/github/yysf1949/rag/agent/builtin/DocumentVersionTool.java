@@ -42,7 +42,8 @@ public class DocumentVersionTool {
             description = "管理文档版本。action:list/get_active/publish/rollback。返回action/versions/status/activeVersion。"
                     + "用户问'这个文档有哪些版本'、'帮我回滚到上个版本'。文档级操作不影响其他文档。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
-            idempotent = true)
+            idempotent = true,
+            requiresIdempotencyKey = true)
     public DocumentVersionResponse manage(DocumentVersionRequest request) {
         Objects.requireNonNull(request, "request");
         return switch (request.action()) {

@@ -283,12 +283,12 @@ FT.searchParams()
 
 ### 9.2 4 级工具风险
 
-| 级别 | 示例 | 自动执行 | 幂等键 |
-|---|---|---|---|
-| L1_READ | `kb_search` | ✅ | 不需要 |
-| L2_REVERSIBLE | `create_reminder_ticket` | ✅ | 强制 |
-| L3_BUSINESS_STATE | （未来：创建退款） | ⚠️ 二次确认 | 强制 |
-| L4_HIGH_RISK | （未来：删除 KB） | ❌ 需 admin | 强制 |
+| 级别 | 示例 | 自动执行 | 幂等键 | 确认令牌 | 金额门控 |
+|---|---|---|---|---|---|
+| L1_READ | `kb_search` / `get_order` / `query_logistics` | ✅ | 不需要 | — | — |
+| L2_REVERSIBLE | `create_reminder_ticket` / `cancel_refund` / `doc_version` / `kb_version` | ✅ | 强制 | — | — |
+| L3_BUSINESS_STATE | `cancel_order` (100元) / `create_refund` (500元) / `create_complaint` / `execute_after_service` (500元) | ⚠️ 二次确认 | 强制 | 可选 | `maxAmountCents` |
+| L4_HIGH_RISK | `approve_refund` (10000元, admin 角色) | ❌ 需 admin | 强制 | **强制** | `maxAmountCents` |
 
 ### 9.3 升级路径
 
@@ -304,10 +304,10 @@ FT.searchParams()
 ### 10.1 扩展的 4 级风险
 
 Phase 9 建立了 4 级风险 enum + RiskGate 框架，Phase 10 真正落地：
-- **L1 (READ)** — `kb_search` / `get_order` / `query_logistics` / `list_active_coupons`
-- **L2 (REVERSIBLE)** — `create_reminder_ticket` (Phase 9 已有)
-- **L3 (BUSINESS_STATE)** — `cancel_order` (max 100 元) / `create_refund` (max 500 元) / `issue_coupon` (max 200 元)
-- **L4 (HIGH_RISK)** — `approve_refund` (admin 角色强制)
+- **L1 (READ)** — `kb_search` / `get_order` / `query_logistics` / `list_active_coupons` / `query_user_info` / `get_member_benefits` / `check_stock` / `query_payment_channel` / `query_refund` / `calculate_refund_amount`
+- **L2 (REVERSIBLE)** — `create_reminder_ticket` / `cancel_refund` / `send_notification` / `doc_version` / `kb_version` / `generate_conversation_summary`
+- **L3 (BUSINESS_STATE)** — `cancel_order` (max 100元) / `create_refund` (max 500元, 确认令牌) / `issue_coupon` (max 200元) / `create_complaint` / `execute_after_service` (max 500元) / `apply_price_protection` (max 200元) / `submit_satisfaction_survey`
+- **L4 (HIGH_RISK)** — `approve_refund` (max 10000元, admin 角色强制, **确认令牌强制**)
 
 ### 10.2 人工转接机制
 

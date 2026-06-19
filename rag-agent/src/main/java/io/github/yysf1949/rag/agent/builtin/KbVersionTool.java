@@ -51,7 +51,8 @@ public class KbVersionTool {
             description = "管理知识库版本。action:list/get_active/switch/rollback。返回action/versions/status/activeVersion。"
                     + "用户问'知识库现在是什么版本'、'切回上一个版本'。KB级操作影响所有检索。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
-            idempotent = true)
+            idempotent = true,
+            requiresIdempotencyKey = true)
     public KbVersionResponse manage(KbVersionRequest request) {
         Objects.requireNonNull(request, "request");
         return switch (request.action()) {

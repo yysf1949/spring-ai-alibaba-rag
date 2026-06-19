@@ -55,7 +55,9 @@ public class RefundTool {
                     + "幂等：同一退款单重复审批直接返回当前状态。",
             riskLevel = RiskLevel.L4_HIGH_RISK,
             idempotent = true,  // 同 refundId + admin 重复审批 = 幂等
-            requiresIdempotencyKey = true
+            requiresIdempotencyKey = true,
+            requiresConfirmationToken = true,  // L4 最高风险：必须验证确认令牌
+            maxAmountCents = 10000_00L  // 单笔审批上限 10000 元
     )
     public ApproveRefundResponse approveRefund(ApproveRefundRequest req) {
         // 委托给领域服务

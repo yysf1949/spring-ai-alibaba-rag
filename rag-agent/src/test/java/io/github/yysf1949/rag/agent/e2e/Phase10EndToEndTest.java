@@ -197,7 +197,7 @@ class Phase10EndToEndTest {
         String refundId2 = createResp2.refundId();
 
         var approveReq = AgentRequest.of(
-                identity("t1", "admin-1", "s1", Set.of("admin")),
+                withConfirmationToken(identity("t1", "admin-1", "s1", Set.of("admin")), "approve_refund"),
                 "approve_refund",
                 new RefundTool.ApproveRefundRequest("t1", "admin-1", refundId2, 50_00L),
                 IdempotencyKey.of("t1", "admin-1", "s1", "approve_refund", "refund-approve-2"));

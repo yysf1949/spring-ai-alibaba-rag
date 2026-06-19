@@ -37,7 +37,8 @@ public class AfterServiceTool {
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = true,
             requiresIdempotencyKey = true,
-            requiresConfirmationToken = true
+            requiresConfirmationToken = true,
+            maxAmountCents = 500_00L  // 售后善后单笔上限 500 元
     )
     public AfterServiceResponse execute(IdempotencyKey idempotencyKey, AfterServiceRequest req) {
         Objects.requireNonNull(req, "req");

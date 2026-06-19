@@ -21,6 +21,7 @@ rag-redis/        — Redis Stack vector store + 3-tier cache
 rag-pipeline/     — orchestrators (IngestService, QAService, ContextAssembler, Rewrite)
 rag-embedding/    — Stub adapters + SiliconFlow real adapters (EmbeddingGateway / RerankService / LlmService); toggle via `rag.siliconflow.enabled` + `SILICONFLOW_API_KEY`
 rag-app/          — Spring Boot wiring (HTTP, MDC, OpenAPI 3, RFC 7807 errors, e2e test)
+rag-agent/        — AI Agent action layer (@ToolSpec tools, orchestration, governance: risk gate + idempotency + confirmation + audit)
 ```
 
 ## Pipeline status (live)
