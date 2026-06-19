@@ -1,6 +1,10 @@
 package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryRefundRepository;
+import io.github.yysf1949.rag.agent.governance.AgentMetrics;
+import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
+import io.github.yysf1949.rag.agent.service.RefundApplicationService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -17,7 +21,9 @@ class RefundToolTest {
         // Phase 13b M5: RefundTool 现在依赖 RefundRuleTool — 测试用一个空规则（无限制）的实例
         var channel = new PaymentChannelTool();
         var ruleTool = new RefundRuleTool(channel);
-        tool = new RefundTool(repo, ruleTool);
+        var metrics = new AgentMetrics(new SimpleMeterRegistry());
+        var service = new RefundApplicationService(repo, ruleTool, new InMemoryIdempotencyStore(), metrics);
+        tool = new RefundTool(service);
     }
 
     @Test

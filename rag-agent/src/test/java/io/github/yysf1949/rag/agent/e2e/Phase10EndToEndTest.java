@@ -15,6 +15,10 @@ import io.github.yysf1949.rag.agent.governance.*;
 import io.github.yysf1949.rag.agent.handoff.HandoffService;
 import io.github.yysf1949.rag.agent.handoff.HumanReviewQueue;
 import io.github.yysf1949.rag.agent.orchestration.DefaultAgentLoop;
+import io.github.yysf1949.rag.agent.service.CouponApplicationService;
+import io.github.yysf1949.rag.agent.service.OrderApplicationService;
+import io.github.yysf1949.rag.agent.service.RefundApplicationService;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.github.yysf1949.rag.core.model.Answer;
 import io.github.yysf1949.rag.core.model.AnswerSource;
@@ -77,6 +81,7 @@ class Phase10EndToEndTest {
 
         try (var ctx = new AnnotationConfigApplicationContext()) {
             ctx.registerBean(io.github.yysf1949.rag.core.port.RetrievalPort.class, () -> port);
+            ctx.registerBean(MeterRegistry.class, SimpleMeterRegistry::new);
             ctx.register(KbSearchTool.class, TicketTool.class, InMemoryTicketRepository.class,
                     InMemoryIdempotencyStore.class, ConfirmationService.class, DefaultRiskGate.class,
                     InMemoryToolRegistry.class,
@@ -85,7 +90,12 @@ class Phase10EndToEndTest {
                     CouponTool.class, InMemoryCouponRepository.class,
                     LogisticsTool.class,
                     // Phase 13b M5: RefundTool 现在依赖 PaymentChannelTool + RefundRuleTool
-                    PaymentChannelTool.class, RefundRuleTool.class);
+                    PaymentChannelTool.class, RefundRuleTool.class,
+                    // Domain services — Agent 和管理后台共用
+                    AgentMetrics.class,
+                    OrderApplicationService.class,
+                    RefundApplicationService.class,
+                    CouponApplicationService.class);
             ctx.refresh();
 
             ToolRegistry registry = ctx.getBean(InMemoryToolRegistry.class);
@@ -101,7 +111,7 @@ class Phase10EndToEndTest {
             IdempotencyStore idem = ctx.getBean(InMemoryIdempotencyStore.class);
             confirmationService = new ConfirmationService();
             RiskGate gate = new DefaultRiskGate(confirmationService);
-            AgentMetrics metrics = new AgentMetrics(new SimpleMeterRegistry());
+            AgentMetrics metrics = ctx.getBean(AgentMetrics.class);
             HandoffService handoffService = new HandoffService(new HumanReviewQueue(), metrics);
             ObjectMapper objectMapper = new ObjectMapper();
             loop = new DefaultAgentLoop(registry, gate, idem, bridge,

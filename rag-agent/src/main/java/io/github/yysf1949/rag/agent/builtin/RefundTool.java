@@ -2,8 +2,7 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
-import io.github.yysf1949.rag.agent.builtin.port.RefundRepositoryPort;
-import io.github.yysf1949.rag.agent.exception.HandoffRequiredException;
+import io.github.yysf1949.rag.agent.service.RefundApplicationService;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,10 +14,10 @@ import org.springframework.stereotype.Component;
  *   <li>{@code approve_refund} — L4_HIGH_RISK（直接打款，admin 角色强制）</li>
  * </ul>
  *
- * <h2>Phase 13b M5: 业务规则前置校验</h2>
- * <p>{@code create_refund} 在写 Repo 前必须先调 {@link RefundRuleTool#checkRefundRules}，
- * 命中"组合优惠 / 退款期 / 支付渠道"任一规则 → 抛 {@link HandoffRequiredException}，
- * 由 {@code DefaultAgentLoop} 捕获并自动转人工（带完整 matchedRules + riskNote）。</p>
+ * <h2>委托模式</h2>
+ * <p>本工具类仅负责 API 契约（参数/返回值），所有业务逻辑委托给
+ * {@link RefundApplicationService}。Agent 和管理后台共享同一个领域服务，
+ * 确保「不应该有一套给 Agent 用的简化逻辑，另一套给管理后台用的完整逻辑」。</p>
  */
 @Component
 public class RefundTool {
@@ -26,12 +25,10 @@ public class RefundTool {
     /** 创建退款单笔金额上限（分）— 500 元 */
     public static final long CREATE_MAX_AMOUNT_CENTS = 500_00L;
 
-    private final RefundRepositoryPort repo;
-    private final RefundRuleTool ruleTool;
+    private final RefundApplicationService refundApplicationService;
 
-    public RefundTool(RefundRepositoryPort repo, RefundRuleTool ruleTool) {
-        this.repo = repo;
-        this.ruleTool = ruleTool;
+    public RefundTool(RefundApplicationService refundApplicationService) {
+        this.refundApplicationService = refundApplicationService;
     }
 
     @ToolSpec(
@@ -45,28 +42,11 @@ public class RefundTool {
             requiresConfirmationToken = true  // Phase 21: 文章要求"用户明确确认"
     )
     public CreateRefundResponse createRefund(CreateRefundRequest req) {
-        // 金额门控 — RiskGate 也会检查，这里写一次保证直接调用时也走门控
-        if (req.amountCents() > CREATE_MAX_AMOUNT_CENTS) {
-            throw new io.github.yysf1949.rag.agent.exception.AmountLimitExceededException(
-                    "create_refund", req.amountCents(), CREATE_MAX_AMOUNT_CENTS);
-        }
-        // Phase 13b M5: 业务规则前置 — 退款期 / 组合优惠 / 支付渠道
-        RefundRuleTool.RefundRuleResult rule = ruleTool.checkRefundRules(
-                new RefundRuleTool.CheckRefundRulesRequest(req.orderId()));
-        if (rule.requiresManual()) {
-            throw new HandoffRequiredException(
-                    "create_refund",
-                    rule.reason(),
-                    rule.matchedRules(),
-                    "Order [" + req.orderId() + "] hits business rule " + rule.reason()
-                            + "; refund requires manual review per company policy.");
-        }
-        var refund = new RefundRepositoryPort.RefundRecord(
-                RefundRepositoryPort.newRefundId(),
+        // 委托给领域服务 — Agent 和管理后台走同一条代码路径
+        var record = refundApplicationService.createRefund(
                 req.tenantId(), req.userId(), req.orderId(),
-                req.amountCents(), req.reason(), "PENDING");
-        repo.save(refund);
-        return new CreateRefundResponse(refund.refundId(), "PENDING", refund.amountCents());
+                req.amountCents(), req.reason(), null);
+        return new CreateRefundResponse(record.refundId(), record.status(), record.amountCents());
     }
 
     @ToolSpec(
@@ -78,17 +58,10 @@ public class RefundTool {
             requiresIdempotencyKey = true
     )
     public ApproveRefundResponse approveRefund(ApproveRefundRequest req) {
-        var existing = repo.findByIdAndTenant(req.refundId(), req.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Refund not found"));
-        // 幂等：已 APPROVED 直接返回
-        if ("APPROVED".equals(existing.status())) {
-            return new ApproveRefundResponse(existing.refundId(), "APPROVED", existing.amountCents());
-        }
-        var approved = new RefundRepositoryPort.RefundRecord(
-                existing.refundId(), existing.tenantId(), existing.userId(),
-                existing.orderId(), existing.amountCents(), existing.reason(), "APPROVED");
-        repo.save(approved);
-        return new ApproveRefundResponse(approved.refundId(), "APPROVED", approved.amountCents());
+        // 委托给领域服务
+        var record = refundApplicationService.approveRefund(
+                req.refundId(), req.tenantId(), req.adminUserId());
+        return new ApproveRefundResponse(record.refundId(), record.status(), record.amountCents());
     }
 
     public record CreateRefundRequest(String tenantId, String userId, String orderId,

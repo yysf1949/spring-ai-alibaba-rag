@@ -1,8 +1,11 @@
 package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryCouponRepository;
+import io.github.yysf1949.rag.agent.governance.AgentMetrics;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
+import io.github.yysf1949.rag.agent.service.CouponApplicationService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,7 +21,9 @@ class CouponToolTest {
     void setUp() {
         repo = new InMemoryCouponRepository();
         idemStore = new InMemoryIdempotencyStore();
-        tool = new CouponTool(repo, idemStore);
+        var metrics = new AgentMetrics(new SimpleMeterRegistry());
+        var service = new CouponApplicationService(repo, idemStore, metrics);
+        tool = new CouponTool(service);
     }
 
     private IdempotencyKey key(String token) {

@@ -2,13 +2,11 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
-import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
-import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
+import io.github.yysf1949.rag.agent.service.OrderApplicationService;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Set;
 
 /**
  * 订单工具 — L1 查询 + L1 列表 + L3 取消。
@@ -20,8 +18,10 @@ import java.util.Set;
  *   <li>{@code cancel_order} — L3_BUSINESS_STATE（写业务态，单笔 ≤ 100 元不需转人工）</li>
  * </ul>
  *
- * <h2>maxAmountCents 含义</h2>
- * <p>对 cancel_order：单笔订单金额上限 100 元 = 10000 cents。超过此金额必须转人工审批。</p>
+ * <h2>委托模式</h2>
+ * <p>本工具类仅负责 API 契约（参数/返回值），所有业务逻辑委托给
+ * {@link OrderApplicationService}。Agent 和管理后台共享同一个领域服务，
+ * 确保「不应该有一套给 Agent 用的简化逻辑，另一套给管理后台用的完整逻辑」。</p>
  */
 @Component
 public class OrderTool {
@@ -29,12 +29,10 @@ public class OrderTool {
     /** 取消订单单笔金额上限（分）— 100 元 */
     public static final long CANCEL_MAX_AMOUNT_CENTS = 100_00L;
 
-    private final OrderRepositoryPort repo;
-    private final IdempotencyStore idempotencyStore;
+    private final OrderApplicationService orderApplicationService;
 
-    public OrderTool(OrderRepositoryPort repo, IdempotencyStore idempotencyStore) {
-        this.repo = repo;
-        this.idempotencyStore = idempotencyStore;
+    public OrderTool(OrderApplicationService orderApplicationService) {
+        this.orderApplicationService = orderApplicationService;
     }
 
     @ToolSpec(
@@ -46,8 +44,8 @@ public class OrderTool {
             requiresIdempotencyKey = false
     )
     public GetOrderResponse getOrder(GetOrderRequest req) {
-        var order = repo.findByIdAndTenant(req.orderId(), req.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + req.orderId()));
+        // 委托给领域服务
+        var order = orderApplicationService.getOrder(req.tenantId(), req.orderId());
         return new GetOrderResponse(
                 order.orderId(), order.status(), order.amountCents(), order.userId());
     }
@@ -61,7 +59,8 @@ public class OrderTool {
             requiresIdempotencyKey = false
     )
     public ListOrdersResponse listOrders(ListOrdersRequest req) {
-        var orders = repo.findByUser(req.tenantId(), req.userId());
+        // 委托给领域服务
+        var orders = orderApplicationService.listOrders(req.tenantId(), req.userId());
         var briefs = orders.stream()
                 .map(o -> new OrderBrief(o.orderId(), o.status(), o.amountCents()))
                 .toList();
@@ -79,32 +78,11 @@ public class OrderTool {
             requiresConfirmationToken = true
     )
     public CancelOrderResponse cancelOrder(IdempotencyKey idempotencyKey, CancelOrderRequest req) {
-        // 幂等检查 — 文章: '即使模型重复调用，系统也应该返回第一次的执行结果'
-        IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);
-        if (put.isReplay()) {
-            String existingStatus = (String) put.value();
-            if (existingStatus != null) {
-                return new CancelOrderResponse(req.orderId(), existingStatus, req.reason());
-            }
-        }
-
-        var order = repo.findByIdAndTenant(req.orderId(), req.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + req.orderId()));
-        // 幂等：已经是 CANCELLED 的订单，直接返回当前状态，不重复写
-        if ("CANCELLED".equals(order.status())) {
-            return new CancelOrderResponse(order.orderId(), order.status(), req.reason());
-        }
-        // 已发货/已送达都不能再取消
-        if (!Set.of("CREATED", "PAID").contains(order.status())) {
-            throw new IllegalStateException("Cannot cancel order in status: " + order.status());
-        }
-        var cancelled = new OrderRepositoryPort.OrderRecord(
-                order.orderId(), order.tenantId(), order.userId(),
-                order.amountCents(), "CANCELLED");
-        repo.save(cancelled);
-        // 回填幂等结果
-        idempotencyStore.replace(idempotencyKey, "CANCELLED");
-        return new CancelOrderResponse(order.orderId(), "CANCELLED", req.reason());
+        // 委托给领域服务 — Agent 和管理后台走同一条代码路径
+        var record = orderApplicationService.cancelOrder(
+                req.tenantId(), req.userId(), req.orderId(),
+                req.amountCents(), req.reason(), idempotencyKey);
+        return new CancelOrderResponse(record.orderId(), record.status(), req.reason());
     }
 
     public record GetOrderRequest(String tenantId, String userId, String orderId) { }

@@ -2,6 +2,10 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryRefundRepository;
 import io.github.yysf1949.rag.agent.exception.HandoffRequiredException;
+import io.github.yysf1949.rag.agent.governance.AgentMetrics;
+import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
+import io.github.yysf1949.rag.agent.service.RefundApplicationService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -19,7 +23,10 @@ class RefundToolRuleIntegrationTest {
     private final InMemoryRefundRepository repo = new InMemoryRefundRepository();
     private final PaymentChannelTool channel = new PaymentChannelTool();
     private final RefundRuleTool ruleTool = new RefundRuleTool(channel);
-    private final RefundTool tool = new RefundTool(repo, ruleTool);
+    private final AgentMetrics metrics = new AgentMetrics(new SimpleMeterRegistry());
+    private final RefundApplicationService service =
+            new RefundApplicationService(repo, ruleTool, new InMemoryIdempotencyStore(), metrics);
+    private final RefundTool tool = new RefundTool(service);
 
     @Test
     void normalOrderAutoProcesses() {

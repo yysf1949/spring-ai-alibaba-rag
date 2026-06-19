@@ -1,5 +1,7 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -9,7 +11,12 @@
     {
       "title": "Agent Tool Invocations (by outcome)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "targets": [
         {
           "expr": "rate(agent_tool_invocations_total[5m])",
@@ -20,19 +27,72 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
-          "custom": { "drawStyle": "bars", "fillOpacity": 30, "stacking": { "mode": "normal" } }
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 30,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "SUCCESS" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "FAILURE" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "HANDOFF_REQUIRED" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SUCCESS"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "FAILURE"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "HANDOFF_REQUIRED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
         ]
       }
     },
     {
       "title": "Agent Tool Latency P50 / P95 / P99",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, rate(agent_tool_latency_seconds_bucket[5m]))",
@@ -51,13 +111,24 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2 } }
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          }
+        }
       }
     },
     {
       "title": "Handoffs (by reason + channel)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
       "targets": [
         {
           "expr": "increase(agent_handoffs_total[1h])",
@@ -70,9 +141,18 @@
           "unit": "short",
           "thresholds": {
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 5 },
-              { "color": "red", "value": 20 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
             ]
           }
         }
@@ -81,7 +161,12 @@
     {
       "title": "Idempotency Replays (稳定性指标)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 8
+      },
       "targets": [
         {
           "expr": "increase(agent_idempotency_replays_total[1h])",
@@ -94,9 +179,18 @@
           "unit": "short",
           "thresholds": {
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 10 },
-              { "color": "red", "value": 50 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
             ]
           }
         }
@@ -105,7 +199,12 @@
     {
       "title": "Agent Errors (治理层/编排层异常)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "targets": [
         {
           "expr": "rate(agent_tool_errors_total[5m])",
@@ -116,16 +215,37 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
-          "custom": { "drawStyle": "line", "fillOpacity": 20 },
-          "color": { "mode": "palette-classic" },
-          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.1 }] }
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          }
         }
       }
     },
     {
       "title": "Tool Invocation Heatmap (success rate %)",
       "type": "gauge",
-      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 12 },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
       "targets": [
         {
           "expr": "100 * sum by (tool) (rate(agent_tool_invocations_total{outcome=\"SUCCESS\"}[5m])) / sum by (tool) (rate(agent_tool_invocations_total[5m]))",
@@ -140,9 +260,18 @@
           "max": 100,
           "thresholds": {
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 80 },
-              { "color": "green", "value": 95 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "green",
+                "value": 95
+              }
             ]
           }
         }
@@ -151,7 +280,12 @@
     {
       "title": "Active Conversations (multi-turn sessions)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 12 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 12
+      },
       "targets": [
         {
           "expr": "chat_memory_active_conversations",
@@ -164,21 +298,254 @@
           "unit": "short",
           "thresholds": {
             "steps": [
-              { "color": "blue", "value": null },
-              { "color": "green", "value": 10 },
-              { "color": "orange", "value": 100 }
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 10
+              },
+              {
+                "color": "orange",
+                "value": 100
+              }
             ]
           }
+        }
+      }
+    },
+    {
+      "title": "Business Errors (错误执行率)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "rate(agent_tool_business_errors_total[5m])",
+          "legendFormat": "{{tool}} — {{errorType}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 30,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "title": "Confirmation Rate (用户确认率)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(agent_tool_confirmations_total{confirmed=\"true\"}) / sum(agent_tool_confirmations_total)",
+          "legendFormat": "confirmation rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Rollbacks (回滚次数)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "increase(agent_tool_rollbacks_total[1h])",
+          "legendFormat": "{{tool}} — {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Audit Events (审计事件流)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "rate(agent_audit_total[5m])",
+          "legendFormat": "{{tool}} — {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "title": "Resolution Rate (端到端问题解决率)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "agent_conversation_resolution_rate * 100",
+          "legendFormat": "resolution rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 80
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Handoff Quality (转人工质量)",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "agent_conversation_handoff_quality_total",
+          "legendFormat": "{{hasContext}} — {{handoffReason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
         }
       }
     }
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["agent", "rag", "observability"],
-  "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
+  "tags": [
+    "agent",
+    "rag",
+    "observability"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "title": "RAG Agent Observability Dashboard",
   "uid": "rag-agent-observability",
-  "version": 1
+  "version": 2
 }

@@ -2,8 +2,11 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.builtin.port.*;
 import io.github.yysf1949.rag.agent.builtin.store.*;
+import io.github.yysf1949.rag.agent.governance.AgentMetrics;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
+import io.github.yysf1949.rag.agent.service.OrderApplicationService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -314,7 +317,9 @@ class AllNewToolsTest {
         @BeforeEach
         void setUp() {
             repo = new InMemoryOrderRepository();
-            tool = new OrderTool(repo, new InMemoryIdempotencyStore());
+            var metrics = new AgentMetrics(new SimpleMeterRegistry());
+            var service = new OrderApplicationService(repo, new InMemoryIdempotencyStore(), metrics);
+            tool = new OrderTool(service);
         }
 
         @Test

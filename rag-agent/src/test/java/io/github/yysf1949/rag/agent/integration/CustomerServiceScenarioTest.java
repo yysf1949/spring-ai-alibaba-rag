@@ -4,10 +4,15 @@ import io.github.yysf1949.rag.agent.builtin.*;
 import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
 import io.github.yysf1949.rag.agent.builtin.port.MemberProfileRepositoryPort;
 import io.github.yysf1949.rag.agent.builtin.store.*;
+import io.github.yysf1949.rag.agent.governance.AgentMetrics;
 import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
-import org.junit.jupiter.api.BeforeEach;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
+import io.github.yysf1949.rag.agent.service.CouponApplicationService;
+import io.github.yysf1949.rag.agent.service.OrderApplicationService;
+import io.github.yysf1949.rag.agent.service.RefundApplicationService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -61,15 +66,24 @@ class CustomerServiceScenarioTest {
         memberRepo = new InMemoryMemberProfileRepository();
         idemStore = new InMemoryIdempotencyStore();
 
+        // metrics
+        var metrics = new AgentMetrics(new SimpleMeterRegistry());
+
+        // domain services
+        var orderService = new OrderApplicationService(orderRepo, idemStore, metrics);
+        var refundService = new RefundApplicationService(refundRepo, new RefundRuleTool(new PaymentChannelTool()), idemStore, metrics);
+        var couponService = new CouponApplicationService(couponRepo, idemStore, metrics);
+
         // tools
-        orderTool = new OrderTool(orderRepo, idemStore);
+        orderTool = new OrderTool(orderService);
         logisticsTool = new LogisticsTool();
         paymentChannelTool = new PaymentChannelTool();
         refundRuleTool = new RefundRuleTool(paymentChannelTool);
         refundCalculatorTool = new RefundCalculatorTool(refundRuleTool, orderRepo);
-        refundTool = new RefundTool(refundRepo, refundRuleTool);
+        refundService = new RefundApplicationService(refundRepo, refundRuleTool, idemStore, metrics);
+        refundTool = new RefundTool(refundService);
         complaintTool = new ComplaintTool(complaintRepo, idemStore);
-        couponTool = new CouponTool(couponRepo, idemStore);
+        couponTool = new CouponTool(couponService);
         memberBenefitsTool = new MemberBenefitsTool(memberRepo);
         notificationTool = new NotificationTool(notificationRepo);
         surveyTool = new SatisfactionSurveyTool(surveyRepo, idemStore);

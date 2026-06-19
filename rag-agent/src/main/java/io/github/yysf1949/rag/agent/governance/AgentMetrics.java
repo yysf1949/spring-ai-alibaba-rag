@@ -5,6 +5,7 @@ import io.github.yysf1949.rag.agent.builtin.port.SatisfactionSurveyPort;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -42,6 +43,7 @@ public class AgentMetrics {
     private final ConcurrentHashMap<String, AtomicLong> successCounts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicLong> failureCounts = new ConcurrentHashMap<>();
 
+    @Autowired
     public AgentMetrics(MeterRegistry registry) {
         this.registry = registry;
     }

@@ -2,8 +2,11 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryOrderRepository;
+import io.github.yysf1949.rag.agent.governance.AgentMetrics;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
+import io.github.yysf1949.rag.agent.service.OrderApplicationService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,7 +25,9 @@ class OrderToolTest {
         // 预置数据 — CREATED 状态才能被 cancel（plan 业务规则要求只 CREATED/PAID 可取消）
         repo.save(new OrderRepositoryPort.OrderRecord(
                 "ORD-1", "tenant-1", "user-1", 100_00L, "CREATED"));
-        tool = new OrderTool(repo, idemStore);
+        var metrics = new AgentMetrics(new SimpleMeterRegistry());
+        var service = new OrderApplicationService(repo, idemStore, metrics);
+        tool = new OrderTool(service);
     }
 
     private IdempotencyKey key(String token) {

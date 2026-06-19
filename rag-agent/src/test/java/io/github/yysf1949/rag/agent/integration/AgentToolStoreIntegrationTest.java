@@ -12,9 +12,13 @@ import io.github.yysf1949.rag.agent.store.H2TicketRepository;
 import io.github.yysf1949.rag.agent.store.H2CouponRepository;
 import io.github.yysf1949.rag.agent.store.H2RefundRepository;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
+import io.github.yysf1949.rag.agent.governance.AgentMetrics;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
+import io.github.yysf1949.rag.agent.service.CouponApplicationService;
+import io.github.yysf1949.rag.agent.service.OrderApplicationService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.*;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -78,10 +82,15 @@ class AgentToolStoreIntegrationTest {
         refundRepo = new H2RefundRepository(jdbc);
         idemStore = new InMemoryIdempotencyStore();
 
+        // metrics + domain services
+        var metrics = new AgentMetrics(new SimpleMeterRegistry());
+        var orderService = new OrderApplicationService(orderRepo, idemStore, metrics);
+        var couponService = new CouponApplicationService(couponRepo, idemStore, metrics);
+
         // 初始化 tools
-        orderTool = new OrderTool(orderRepo, idemStore);
+        orderTool = new OrderTool(orderService);
         ticketTool = new TicketTool(ticketRepo, idemStore);
-        couponTool = new CouponTool(couponRepo, idemStore);
+        couponTool = new CouponTool(couponService);
     }
 
     // ---- OrderTool → H2 ----

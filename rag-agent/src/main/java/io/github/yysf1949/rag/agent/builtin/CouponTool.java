@@ -2,15 +2,19 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
-import io.github.yysf1949.rag.agent.builtin.port.CouponRepositoryPort;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
-import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
+import io.github.yysf1949.rag.agent.service.CouponApplicationService;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 /**
  * 优惠券工具 — L3 补发 + L1 查询。
+ *
+ * <h2>委托模式</h2>
+ * <p>本工具类仅负责 API 契约（参数/返回值），所有业务逻辑委托给
+ * {@link CouponApplicationService}。Agent 和管理后台共享同一个领域服务，
+ * 确保「不应该有一套给 Agent 用的简化逻辑，另一套给管理后台用的完整逻辑」。</p>
  */
 @Component
 public class CouponTool {
@@ -18,12 +22,10 @@ public class CouponTool {
     /** 单张优惠券金额上限（分）— 200 元 */
     public static final long ISSUE_MAX_AMOUNT_CENTS = 200_00L;
 
-    private final CouponRepositoryPort repo;
-    private final IdempotencyStore idempotencyStore;
+    private final CouponApplicationService couponApplicationService;
 
-    public CouponTool(CouponRepositoryPort repo, IdempotencyStore idempotencyStore) {
-        this.repo = repo;
-        this.idempotencyStore = idempotencyStore;
+    public CouponTool(CouponApplicationService couponApplicationService) {
+        this.couponApplicationService = couponApplicationService;
     }
 
     @ToolSpec(
@@ -37,27 +39,11 @@ public class CouponTool {
             requiresConfirmationToken = true
     )
     public IssueCouponResponse issueCoupon(IdempotencyKey idempotencyKey, IssueCouponRequest req) {
-        // 幂等检查 — 文章: '即使模型重复调用，系统也应该返回第一次的执行结果'
-        IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);
-        if (put.isReplay()) {
-            String existingId = (String) put.value();
-            if (existingId != null) {
-                return new IssueCouponResponse(existingId, req.amountCents(), "ACTIVE");
-            }
-        }
-
-        if (req.amountCents() > ISSUE_MAX_AMOUNT_CENTS) {
-            throw new io.github.yysf1949.rag.agent.exception.AmountLimitExceededException(
-                    "issue_coupon", req.amountCents(), ISSUE_MAX_AMOUNT_CENTS);
-        }
-        var coupon = new CouponRepositoryPort.CouponRecord(
-                CouponRepositoryPort.newCouponId(),
+        // 委托给领域服务 — Agent 和管理后台走同一条代码路径
+        var record = couponApplicationService.issueCoupon(
                 req.tenantId(), req.userId(), req.orderId(),
-                req.amountCents(), req.reasonTag(), "ACTIVE");
-        repo.save(coupon);
-        // 回填幂等结果
-        idempotencyStore.replace(idempotencyKey, coupon.couponId());
-        return new IssueCouponResponse(coupon.couponId(), coupon.amountCents(), coupon.status());
+                req.amountCents(), req.reasonTag(), idempotencyKey);
+        return new IssueCouponResponse(record.couponId(), record.amountCents(), record.status());
     }
 
     @ToolSpec(
@@ -69,7 +55,8 @@ public class CouponTool {
             requiresIdempotencyKey = false
     )
     public ListCouponsResponse listActiveCoupons(ListCouponsRequest req) {
-        var coupons = repo.findActiveByTenantAndUser(req.tenantId(), req.userId());
+        // 委托给领域服务
+        var coupons = couponApplicationService.listActiveCoupons(req.tenantId(), req.userId());
         var list = coupons.stream()
                 .map(c -> new CouponView(c.couponId(), c.amountCents(), c.reasonTag()))
                 .toList();
