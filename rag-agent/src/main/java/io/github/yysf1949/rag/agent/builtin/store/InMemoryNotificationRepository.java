@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.NotificationRepositoryPort;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * InMemory 通知仓库 — 5 分钟去重窗口, 线程安全。
  */
 @Component
+@Profile("default")
 public class InMemoryNotificationRepository implements NotificationRepositoryPort {
 
     /** userId -> list of records (最近优先) */

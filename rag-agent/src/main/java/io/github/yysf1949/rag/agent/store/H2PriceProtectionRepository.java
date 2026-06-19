@@ -69,4 +69,22 @@ public class H2PriceProtectionRepository implements PriceProtectionPort {
             return false;
         }
     }
+
+    @Override
+    public Optional<PriceProtectionRecord> findByIdempotencyKey(String idempotencyKey, String tenantId) {
+        try {
+            var list = jdbc.query(
+                    "SELECT * FROM agent_price_protection WHERE idempotency_key = ? AND tenant_id = ?",
+                    MAPPER, idempotencyKey, tenantId);
+            return list.stream().findFirst();
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public String nextClaimId() {
+        return "PP-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+
 }

@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
 
@@ -9,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 @Component
+@Profile("default")
 public class InMemoryOrderRepository implements OrderRepositoryPort {
 
     private final ConcurrentHashMap<String, OrderRecord> orders = new ConcurrentHashMap<>();

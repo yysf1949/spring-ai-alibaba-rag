@@ -3,7 +3,6 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.PriceProtectionPort;
-import io.github.yysf1949.rag.agent.builtin.store.InMemoryPriceProtectionRepository;
 import io.github.yysf1949.rag.agent.exception.AmountLimitExceededException;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import org.springframework.stereotype.Component;
@@ -25,12 +24,9 @@ public class PriceProtectionTool {
     public static final long MAX_REFUND_AMOUNT_CENTS = 200_00L;
 
     private final PriceProtectionPort repo;
-    private final InMemoryPriceProtectionRepository repoImpl; // 需要 nextClaimId()
 
-    public PriceProtectionTool(PriceProtectionPort repo,
-                               InMemoryPriceProtectionRepository repoImpl) {
+    public PriceProtectionTool(PriceProtectionPort repo) {
         this.repo = repo;
-        this.repoImpl = repoImpl;
     }
 
     // ==================== L1 查询 ====================
@@ -74,7 +70,7 @@ public class PriceProtectionTool {
     )
     public ApplyResponse applyPriceProtection(IdempotencyKey idempotencyKey, ApplyRequest req) {
         // 0. 幂等检查：同一 idempotencyKey 已存在的申请直接返回
-        var existing = repoImpl.findByIdempotencyKey(req.idempotencyKey(), req.tenantId());
+        var existing = repo.findByIdempotencyKey(req.idempotencyKey(), req.tenantId());
         if (existing.isPresent()) {
             var r = existing.get();
             return new ApplyResponse(r.claimId(), r.status(), r.refundAmountCents());
@@ -104,7 +100,7 @@ public class PriceProtectionTool {
 
         // 5. 保存申请
         var claim = PriceProtectionPort.PriceProtectionRecord.pending(
-                repoImpl.nextClaimId(), req.tenantId(), req.userId(),
+                repo.nextClaimId(), req.tenantId(), req.userId(),
                 req.orderId(), req.productId(), req.refundAmountCents(),
                 req.originalPriceCents(), req.currentPriceCents(), req.reason(), req.idempotencyKey());
         repo.save(claim);

@@ -30,6 +30,7 @@ public class AuditLogger {
     private final MeterRegistry registry;
     private final SensitiveDataMasker masker;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public AuditLogger(MeterRegistry registry) {
         this(registry, new SensitiveDataMasker());
     }

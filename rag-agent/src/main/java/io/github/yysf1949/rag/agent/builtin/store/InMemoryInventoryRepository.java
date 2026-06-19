@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.InventoryPort;
 
@@ -11,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 @Component
+@Profile("default")
 public class InMemoryInventoryRepository implements InventoryPort {
 
     private final ConcurrentHashMap<String, InventoryPort.ProductStock> stocks = new ConcurrentHashMap<>();

@@ -88,4 +88,34 @@ public class RedisPriceProtectionRepository implements PriceProtectionPort {
             return false;
         }
     }
+
+    @Override
+    public Optional<PriceProtectionRecord> findByIdempotencyKey(String idempotencyKey, String tenantId) {
+        // Scan all price_protection keys for this tenant
+        var jedis = factory.jedis();
+        try {
+            var keys = jedis.keys(factory.key("price_protection", tenantId, "*"));
+            for (var key : keys) {
+                var fields = jedis.hgetAll(key);
+                if (idempotencyKey.equals(fields.get("idempotencyKey"))) {
+                    return Optional.of(new PriceProtectionRecord(
+                            fields.get("claimId"), fields.get("tenantId"), fields.get("userId"),
+                            fields.get("orderId"), fields.get("productId"),
+                            Long.parseLong(fields.getOrDefault("refundAmountCents", "0")),
+                            Long.parseLong(fields.getOrDefault("originalPriceCents", "0")),
+                            Long.parseLong(fields.getOrDefault("currentPriceCents", "0")),
+                            fields.get("status"), fields.get("reason"), fields.get("idempotencyKey")));
+                }
+            }
+        } finally {
+            jedis.close();
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public String nextClaimId() {
+        return "PP-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+
 }

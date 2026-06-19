@@ -14,6 +14,12 @@ public interface PriceProtectionPort {
 
     Optional<PriceProtectionRecord> findByIdAndTenant(String claimId, String tenantId);
 
+    /** 按幂等键查找已有申请。 */
+    Optional<PriceProtectionRecord> findByIdempotencyKey(String idempotencyKey, String tenantId);
+
+    /** 生成新的申请单 ID。 */
+    String nextClaimId();
+
     /** 查询某商品品类当前的价保政策（天数 + 赔付比例上限）。 */
     PriceProtectionPolicy getPolicy(String productCategory);
 

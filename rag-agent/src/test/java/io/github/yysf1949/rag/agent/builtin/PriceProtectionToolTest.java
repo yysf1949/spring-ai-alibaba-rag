@@ -20,7 +20,7 @@ class PriceProtectionToolTest {
     @BeforeEach
     void setUp() {
         repo = new InMemoryPriceProtectionRepository();
-        tool = new PriceProtectionTool(repo, repo);
+        tool = new PriceProtectionTool(repo);
     }
 
     private IdempotencyKey key(String token) {

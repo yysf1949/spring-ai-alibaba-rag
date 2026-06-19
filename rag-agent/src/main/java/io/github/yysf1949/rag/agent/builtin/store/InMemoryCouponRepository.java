@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.CouponRepositoryPort;
 import org.springframework.stereotype.Repository;
@@ -12,6 +13,7 @@ import java.util.stream.Collectors;
  * 内存版优惠券仓储。
  */
 @Repository
+@Profile("default")
 public class InMemoryCouponRepository implements CouponRepositoryPort {
 
     private final Map<String, CouponRepositoryPort.CouponRecord> store = new ConcurrentHashMap<>();

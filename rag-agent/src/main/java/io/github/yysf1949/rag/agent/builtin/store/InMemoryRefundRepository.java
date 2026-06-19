@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.RefundRepositoryPort;
 import org.springframework.stereotype.Repository;
@@ -11,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 内存版退款仓储。
  */
 @Repository
+@Profile("default")
 public class InMemoryRefundRepository implements RefundRepositoryPort {
 
     private final Map<String, RefundRepositoryPort.RefundRecord> store = new ConcurrentHashMap<>();

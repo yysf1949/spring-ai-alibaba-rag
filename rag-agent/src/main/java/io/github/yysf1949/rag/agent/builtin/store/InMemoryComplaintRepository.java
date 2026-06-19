@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.ComplaintRepositoryPort;
 
@@ -8,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 @Component
+@Profile("default")
 public class InMemoryComplaintRepository implements ComplaintRepositoryPort {
 
     private final ConcurrentHashMap<String, ComplaintRecord> complaints = new ConcurrentHashMap<>();

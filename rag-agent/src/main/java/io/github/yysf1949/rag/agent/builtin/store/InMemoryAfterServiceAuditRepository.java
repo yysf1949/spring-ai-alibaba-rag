@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.AfterServiceAuditPort;
 import org.springframework.stereotype.Component;
@@ -16,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 端到端跑通。</p>
  */
 @Component
+@Profile("default")
 public class InMemoryAfterServiceAuditRepository implements AfterServiceAuditPort {
 
     private final Map<String, AfterServiceAuditPort.AuditRecord> store = new ConcurrentHashMap<>();

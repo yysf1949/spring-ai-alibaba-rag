@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.PriceProtectionPort;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>默认价保政策：7 天 / 全额差价赔付。</p>
  */
 @Component
+@Profile("default")
 public class InMemoryPriceProtectionRepository implements PriceProtectionPort {
 
     private static final PriceProtectionPolicy DEFAULT_POLICY =

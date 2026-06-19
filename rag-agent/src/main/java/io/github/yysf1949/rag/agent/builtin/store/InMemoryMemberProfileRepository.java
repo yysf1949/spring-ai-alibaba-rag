@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.MemberProfileRepositoryPort;
 import org.springframework.stereotype.Component;
@@ -10,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * InMemory 会员档案仓库 — key = tenantId + "|" + userId, value = profile。
  */
 @Component
+@Profile("default")
 public class InMemoryMemberProfileRepository implements MemberProfileRepositoryPort {
 
     private final ConcurrentHashMap<String, MemberProfile> store = new ConcurrentHashMap<>();

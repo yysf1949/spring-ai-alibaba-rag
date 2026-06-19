@@ -1,4 +1,5 @@
 package io.github.yysf1949.rag.agent.builtin.store;
+import org.springframework.context.annotation.Profile;
 
 import io.github.yysf1949.rag.agent.builtin.port.TicketRepositoryPort;
 import org.springframework.stereotype.Component;
@@ -17,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 幂等 + 审计 + 风险门控的端到端跑通。</p>
  */
 @Component
+@Profile("default")
 public class InMemoryTicketRepository implements TicketRepositoryPort {
 
     private final Map<String, TicketRepositoryPort.TicketRecord> store = new ConcurrentHashMap<>();
