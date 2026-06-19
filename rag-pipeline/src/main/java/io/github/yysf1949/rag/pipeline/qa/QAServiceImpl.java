@@ -424,96 +424,10 @@ public class QAServiceImpl implements QAService {
         // Step 7: generate (with fallback on LLM failure)
         long generateStart = System.currentTimeMillis();
         PipelineMdc.put(PipelineMdc.KEY_STAGE, "generate");
-        String finalText;
-        AnswerSource source;
-        long llmLatencyMs = -1L;
+        GenerateResult genResult;
         try {
-            long llmT0 = System.currentTimeMillis();
-            finalText = llm.generateAnswer(query.tenantId(), assembled.fullPrompt());
-            llmLatencyMs = System.currentTimeMillis() - llmT0;
-            source = AnswerSource.LLM;
-            // Audit — LLM_CALL SUCCESS. Records the (model, prompt, response)
-            // triple so an auditor can reconstruct exactly which model
-            // version produced which answer. The prompt body is truncated
-            // by the caller (we use the assemble stage output verbatim
-            // here because the assembler already capped it at the token
-            // budget; it cannot exceed ~16K tokens).
-            try {
-                llmAuditHook.onLlmCall(
-                        query.tenantId(),
-                        query.userId(),
-                        query.sessionId(),
-                        queryHash,
-                        llm.modelId(),
-                        "qa-default",
-                        assembled.fullPrompt(),
-                        finalText,
-                        llmLatencyMs,
-                        "SUCCESS");
-            } catch (RuntimeException auditEx) {
-                // The hook contract is "never throw" — but defensively
-                // absorb just in case a misbehaving adapter escapes.
-                log.warn("llmAuditHook.onLlmCall threw — ignored: {}", auditEx.toString());
-            }
-        } catch (LlmUnavailableException lue) {
-            llmLatencyMs = System.currentTimeMillis() - generateStart;
-            log.warn("QA LLM unavailable for tenant={} queryHash={} err={} — falling back to FALLBACK_RULE",
-                    query.tenantId(), queryHash, lue.getMessage());
-            Counter.builder("rag.qa.degradation.total")
-                    .tag("tenant", query.tenantId())
-                    .tag("reason", "llm_unavailable")
-                    .register(meterRegistry)
-                    .increment();
-            finalText = fallbackFromChunks(rewritten.rewritten(), reranked);
-            source = AnswerSource.FALLBACK_RULE;
-            // Audit — LLM_CALL DEGRADED (the LLM was called and FAILED;
-            // the audit trail still needs the prompt body that triggered
-            // the failure, otherwise the failure is invisible to
-            // compliance review).
-            try {
-                llmAuditHook.onLlmCall(
-                        query.tenantId(),
-                        query.userId(),
-                        query.sessionId(),
-                        queryHash,
-                        llm.modelId(),
-                        "qa-default",
-                        assembled.fullPrompt(),
-                        lue.getMessage() == null ? "LlmUnavailableException" : lue.getMessage(),
-                        llmLatencyMs,
-                        "DEGRADED");
-            } catch (RuntimeException auditEx) {
-                log.warn("llmAuditHook.onLlmCall threw — ignored: {}", auditEx.toString());
-            }
-        } catch (RuntimeException re) {
-            llmLatencyMs = System.currentTimeMillis() - generateStart;
-            // Any unexpected runtime exception from the LLM is treated as
-            // upstream failure — never let it bubble past QA and crash the
-            // request thread.
-            log.warn("QA LLM threw unexpected for tenant={} queryHash={} err={} — falling back to FALLBACK_RULE",
-                    query.tenantId(), queryHash, re.getMessage());
-            Counter.builder("rag.qa.degradation.total")
-                    .tag("tenant", query.tenantId())
-                    .tag("reason", "llm_unavailable")
-                    .register(meterRegistry)
-                    .increment();
-            finalText = fallbackFromChunks(rewritten.rewritten(), reranked);
-            source = AnswerSource.FALLBACK_RULE;
-            try {
-                llmAuditHook.onLlmCall(
-                        query.tenantId(),
-                        query.userId(),
-                        query.sessionId(),
-                        queryHash,
-                        llm.modelId(),
-                        "qa-default",
-                        assembled.fullPrompt(),
-                        re.getClass().getSimpleName() + ": " + re.getMessage(),
-                        llmLatencyMs,
-                        "DEGRADED");
-            } catch (RuntimeException auditEx) {
-                log.warn("llmAuditHook.onLlmCall threw — ignored: {}", auditEx.toString());
-            }
+            genResult = generateWithFallback(query, queryHash, rewritten.rewritten(),
+                    reranked, assembled);
         } finally {
             stamps[6] = System.currentTimeMillis() - generateStart;
             stageTimers.get("generate").record(stamps[6], TimeUnit.MILLISECONDS);
@@ -523,7 +437,7 @@ public class QAServiceImpl implements QAService {
         // Publish the requests counter with the final source tag.
         Counter.builder("rag.qa.requests.total")
                 .tag("tenant", query.tenantId())
-                .tag("source", source.name())
+                .tag("source", genResult.source.name())
                 .register(meterRegistry)
                 .increment();
 
@@ -533,9 +447,9 @@ public class QAServiceImpl implements QAService {
                 rewritten.rewritten(),
                 retrieved,
                 reranked,
-                finalText,
+                genResult.finalText,
                 assembled.citations(),
-                source,
+                genResult.source,
                 System.currentTimeMillis() - t0,
                 Map.of(
                         "stage.rewrite.ms", stamps[0],
@@ -561,6 +475,64 @@ public class QAServiceImpl implements QAService {
     }
 
     // ─── step implementations ─────────────────────────────────────────────
+
+    /** Result of the generate step (may be LLM or fallback). */
+    private record GenerateResult(String finalText, AnswerSource source) {}
+
+    /**
+     * Step 7 core: call LLM, catch failures, fallback to chunk concatenation.
+     * Extracted from answerInternal to reduce God-class bloat.
+     */
+    private GenerateResult generateWithFallback(
+            Query query, String queryHash, String rewrittenText,
+            List<Chunk> reranked, AssembledPrompt assembled) {
+        try {
+            long llmT0 = System.currentTimeMillis();
+            String finalText = llm.generateAnswer(query.tenantId(), assembled.fullPrompt());
+            long llmLatencyMs = System.currentTimeMillis() - llmT0;
+            // Audit — LLM_CALL SUCCESS
+            fireAudit(query, queryHash, assembled.fullPrompt(), finalText, llmLatencyMs, "SUCCESS");
+            return new GenerateResult(finalText, AnswerSource.LLM);
+        } catch (LlmUnavailableException lue) {
+            log.warn("QA LLM unavailable for tenant={} queryHash={} err={} — falling back to FALLBACK_RULE",
+                    query.tenantId(), queryHash, lue.getMessage());
+            recordDegradation(query.tenantId());
+            String fallback = QaHelpers.fallbackFromChunks(rewrittenText, reranked);
+            fireAudit(query, queryHash, assembled.fullPrompt(),
+                    lue.getMessage() == null ? "LlmUnavailableException" : lue.getMessage(),
+                    -1L, "DEGRADED");
+            return new GenerateResult(fallback, AnswerSource.FALLBACK_RULE);
+        } catch (RuntimeException re) {
+            log.warn("QA LLM threw unexpected for tenant={} queryHash={} err={} — falling back to FALLBACK_RULE",
+                    query.tenantId(), queryHash, re.getMessage());
+            recordDegradation(query.tenantId());
+            String fallback = QaHelpers.fallbackFromChunks(rewrittenText, reranked);
+            fireAudit(query, queryHash, assembled.fullPrompt(),
+                    re.getClass().getSimpleName() + ": " + re.getMessage(),
+                    -1L, "DEGRADED");
+            return new GenerateResult(fallback, AnswerSource.FALLBACK_RULE);
+        }
+    }
+
+    private void fireAudit(Query query, String queryHash, String prompt,
+                           String response, long latencyMs, String status) {
+        try {
+            llmAuditHook.onLlmCall(
+                    query.tenantId(), query.userId(), query.sessionId(),
+                    queryHash, llm.modelId(), "qa-default",
+                    prompt, response, latencyMs, status);
+        } catch (RuntimeException auditEx) {
+            log.warn("llmAuditHook.onLlmCall threw — ignored: {}", auditEx.toString());
+        }
+    }
+
+    private void recordDegradation(String tenantId) {
+        Counter.builder("rag.qa.degradation.total")
+                .tag("tenant", tenantId)
+                .tag("reason", "llm_unavailable")
+                .register(meterRegistry)
+                .increment();
+    }
 
     /** Step 1: rewrite. Always succeeds (RuleBased never throws). */
     private RewriteResult rewrite(Query query) {
@@ -662,42 +634,13 @@ public class QAServiceImpl implements QAService {
 
     /** Step 7 fallback: concatenate retrieved chunks verbatim with citation markers. */
     static String fallbackFromChunks(String queryText, List<Chunk> chunks) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("根据检索到的资料：\n");
-        for (int i = 0; i < chunks.size(); i++) {
-            Chunk c = chunks.get(i);
-            sb.append("[").append(i + 1).append("] ");
-            sb.append(safe(c.title())).append(" › ").append(safe(c.sectionPath())).append('\n');
-            sb.append(c.content()).append('\n');
-        }
-        if (queryText != null && !queryText.isBlank()) {
-            sb.append("\n（针对问题：").append(queryText).append("）");
-        }
-        return sb.toString();
+        return QaHelpers.fallbackFromChunks(queryText, chunks);
     }
 
     /** Empty-retrieval graceful answer with hot questions. */
     private Answer emptyRetrievalAnswer(Query query, RewriteResult rewritten, String queryHash, long t0) {
-        List<String> hot = hotQuestions.recent(query.tenantId(), 5);
-        StringBuilder sb = new StringBuilder();
-        sb.append("抱歉，知识库中没有找到与您问题相关的内容。");
-        if (!hot.isEmpty()) {
-            sb.append("\n\n您可以试试问：\n");
-            for (String q : hot) {
-                sb.append("• ").append(q).append('\n');
-            }
-        }
-        return new Answer(
-                query.tenantId(),
-                queryHash,
-                rewritten.rewritten(),
-                List.of(),
-                List.of(),
-                sb.toString(),
-                List.of(),
-                AnswerSource.FALLBACK_RULE,
-                System.currentTimeMillis() - t0,
-                Map.of("stage.retrieval.empty", true));
+        return QaHelpers.emptyRetrievalAnswer(
+                query.tenantId(), queryHash, rewritten.rewritten(), hotQuestions, t0);
     }
 
     /** Step 8: best-effort cache write. */
@@ -727,22 +670,14 @@ public class QAServiceImpl implements QAService {
         return out;
     }
 
-    /**
-     * SHA-256 hex of the <b>rewritten</b> text — two raw queries that
-     * collapse to the same rewrite must share a cached answer.
-     */
+    /** @deprecated Use {@link QaHelpers#hashQuery(String)} */
+    @Deprecated
     static String hashQuery(String text) {
-        String normalized = text == null ? "" : text.trim().toLowerCase().replaceAll("\\s+", " ");
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(md.digest(normalized.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
+        return QaHelpers.hashQuery(text);
     }
 
     private static String safe(String s) {
-        return s == null ? "" : s;
+        return QaHelpers.safe(s);
     }
 
     /**
@@ -762,22 +697,16 @@ public class QAServiceImpl implements QAService {
                 "anyTruncated", anyTruncated);
     }
 
-    /**
-     * Public surface for the legacy {@code Query#permissionTags} helper — used
-     * by tests to construct a SearchRequest without dealing with the Set
-     * overload.
-     */
+    /** @deprecated Use {@link QaHelpers#tagSet(String...)} */
+    @Deprecated
     public static Set<String> tagSet(String... tags) {
-        Set<String> out = new java.util.HashSet<>();
-        for (String t : tags) {
-            if (t != null && !t.isBlank()) out.add(t);
-        }
-        return out;
+        return QaHelpers.tagSet(tags);
     }
 
-    /** Defensive: callers may pass an empty/negative topN — we floor it. */
+    /** @deprecated Use {@link QaHelpers#safeTopN(int)} */
+    @Deprecated
     static int safeTopN(int requested) {
-        return requested > 0 ? requested : DEFAULT_TOP_N;
+        return QaHelpers.safeTopN(requested);
     }
 
     /**
@@ -797,9 +726,9 @@ public class QAServiceImpl implements QAService {
                 topK);
     }
 
-    /** Small helper: copy-and-truncate a list (used in fallback path). */
+    /** @deprecated Use {@link QaHelpers#take(List, int)} */
+    @Deprecated
     static <T> List<T> take(List<T> in, int n) {
-        if (in == null || in.isEmpty()) return List.of();
-        return new ArrayList<>(in.subList(0, Math.min(n, in.size())));
+        return QaHelpers.take(in, n);
     }
 }

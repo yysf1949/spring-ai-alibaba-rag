@@ -32,6 +32,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -219,7 +220,6 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
     private AgentResponse doExecute(AgentRequest request, long start) {
         AgentOutcome outcome = AgentOutcome.FAILURE;
         Object result = null;
-        AgentResponse.HandoffContextPayload handoffPayload = null;
 
         // ── INTERPRET: 接收请求，解析意图 ──
         String requestJson = safeToJson(request.requestPayload());
@@ -230,9 +230,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
 
         try {
             // 1. 查工具
-            // ── SELECT_TOOLS: 从注册表中查找工具 ──
             ToolDescriptor desc = registry.get(request.toolName());
-            // ── 追踪: 工具选择 ──
             List<String> candidateNames = registry.listNames();
             tracer.logToolSelection(candidateNames, List.of(desc.name()));
             recordDebugEvent(
@@ -240,127 +238,18 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
                     desc.name(), desc.riskLevel(), requestJson, null,
                     null, null);
 
-            // 2. 金额门控 + 风险门控
+            // 2. 风险门控
             Long amountCents = extractAmountCents(desc, request);
-            try {
-                riskGate.check(desc, request.identity(), request.idempotencyKey(), amountCents);
-                // ── VERIFY: 风险门控通过 ──
-                tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "ALLOW", null);
-                recordDebugEvent(
-                        AgentLoopDebugEvent.Phase.VERIFY,
-                        desc.name(), desc.riskLevel(), requestJson, null,
-                        "ALLOW", null);
-            } catch (AmountLimitExceededException e) {
-                // AmountLimitExceeded → 走 handoff 流程
-                tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "HANDOFF",
-                        "Amount limit exceeded: requested=" + e.requestedCents() + " limit=" + e.limitCents());
-                recordDebugEvent(
-                        AgentLoopDebugEvent.Phase.VERIFY,
-                        desc.name(), desc.riskLevel(), requestJson, null,
-                        "DENY", null);
-
-                List<String> toolChain = List.of(request.toolName());
-                HandoffContext hctx = HandoffContext.forAmountLimit(
-                        request.identity(), request.toolName(),
-                        e.requestedCents(), e.limitCents(), toolChain);
-                handoffService.handoff(hctx);
-                handoffPayload = new AgentResponse.HandoffContextPayload(
-                        hctx.reason().name(), hctx.channel().name(),
-                        hctx.summary(), hctx.toolChainJson());
-                outcome = AgentOutcome.HANDOFF_REQUIRED;
-                long latency = System.currentTimeMillis() - start;
-                metrics.recordToolInvocation(request.toolName(), outcome, latency);
-                return new AgentResponse(request.toolName(), outcome, null,
-                        "已转人工处理: " + hctx.summary(), latency, handoffPayload);
-            } catch (ToolRiskDeniedException e) {
-                // ── VERIFY: 风险门控拒绝 ──
-                tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "DENY", e.getMessage());
-                recordDebugEvent(
-                        AgentLoopDebugEvent.Phase.VERIFY,
-                        desc.name(), desc.riskLevel(), requestJson, null,
-                        "DENY", null);
-
-                // L4 admin 拒绝 — 也走 handoff
-                if (desc.riskLevel() == RiskLevel.L4_HIGH_RISK) {
-                    List<String> toolChain = List.of(request.toolName());
-                    HandoffContext hctx = HandoffContext.forInsufficientPrivilege(
-                            request.identity(), request.toolName(), toolChain);
-                    handoffService.handoff(hctx);
-                    handoffPayload = new AgentResponse.HandoffContextPayload(
-                            hctx.reason().name(), hctx.channel().name(),
-                            hctx.summary(), hctx.toolChainJson());
-                    outcome = AgentOutcome.HANDOFF_REQUIRED;
-                    long latency = System.currentTimeMillis() - start;
-                    metrics.recordToolInvocation(request.toolName(), outcome, latency);
-                    return new AgentResponse(request.toolName(), outcome, null,
-                            "已转人工处理: 需要 admin 审批", latency, handoffPayload);
-                }
-                // 普通 DENIED (L2 缺幂等键等) — 记录审计 + 返回 DENIED
-                outcome = AgentOutcome.DENIED;
-                long latency = System.currentTimeMillis() - start;
-                recordAudit(request, desc, "{}", "DENIED", latency);
-                metrics.recordToolInvocation(request.toolName(), outcome, latency);
-                return new AgentResponse(request.toolName(), outcome, null,
-                        e.getMessage(), latency, null);
-            }
+            Optional<AgentResponse> riskDenial = checkRiskGate(
+                    desc, request, requestJson, amountCents, start);
+            if (riskDenial.isPresent()) return riskDenial.get();
 
             // 3. 幂等检查
-            if (request.idempotencyKey() != null) {
-                var putResult = idemStore.putIfAbsent(request.idempotencyKey(), null);
-                if (putResult.isReplay()) {
-                    // ── 追踪: 幂等回放 ──
-                    tracer.logIdempotency(request.idempotencyKey().toString(), true);
-                    outcome = AgentOutcome.REPLAY;
-                    metrics.recordIdempotencyReplay(request.toolName());
-                    long latency = System.currentTimeMillis() - start;
-                    metrics.recordToolInvocation(request.toolName(), outcome, latency);
-                    return new AgentResponse(request.toolName(), outcome, putResult.value(),
-                            "(replay) " + safeToJson(putResult.value()), latency, null);
-                } else {
-                    // ── 追踪: 幂等首次执行 ──
-                    tracer.logIdempotency(request.idempotencyKey().toString(), false);
-                }
-            }
+            Optional<AgentResponse> replay = checkIdempotency(request, start);
+            if (replay.isPresent()) return replay.get();
 
-            // 4. 反射执行 — 业务规则命中也走 handoff（Phase 13b M6）
-            // ── EXECUTE: 调用工具 ──
-            try {
-                result = invokeWithInjection(desc, request);
-                // ── 追踪: 工具执行成功 ──
-                long execDuration = System.currentTimeMillis() - start;
-                tracer.logExecution(desc.name(), safeToJson(request.requestPayload()),
-                        safeToJson(result), execDuration, "SUCCESS");
-            } catch (HandoffRequiredException e) {
-                // ── 追踪: 工具执行触发 handoff ──
-                long execDuration = System.currentTimeMillis() - start;
-                tracer.logExecution(desc.name(), safeToJson(request.requestPayload()),
-                        null, execDuration, "HANDOFF");
-                recordDebugEvent(
-                        AgentLoopDebugEvent.Phase.EXECUTE,
-                        desc.name(), desc.riskLevel(), requestJson,
-                        safeToJson(null), "HANDOFF", null);
-
-                List<String> toolChain = List.of(request.toolName());
-                HandoffContext hctx = HandoffContext.forBusinessRule(
-                        request.identity(), e.toolName(), e.reason(),
-                        e.matchedRules(), e.riskNote(), toolChain);
-                handoffService.handoff(hctx);
-                handoffPayload = new AgentResponse.HandoffContextPayload(
-                        hctx.reason().name(), hctx.channel().name(),
-                        hctx.summary(), hctx.toolChainJson());
-                outcome = AgentOutcome.HANDOFF_REQUIRED;
-                long latency = System.currentTimeMillis() - start;
-                metrics.recordToolInvocation(request.toolName(), outcome, latency);
-                return new AgentResponse(request.toolName(), outcome, null,
-                        "已转人工处理: 业务规则 [" + e.reason() + "] 命中", latency, handoffPayload);
-            }
-            String responseJson = safeToJson(result);
-
-            // ── EXECUTE: 记录执行结果 ──
-            recordDebugEvent(
-                    AgentLoopDebugEvent.Phase.EXECUTE,
-                    desc.name(), desc.riskLevel(), requestJson,
-                    responseJson, "ALLOW", null);
+            // 4. 执行工具
+            result = executeTool(desc, request, requestJson, start);
 
             // 5. 写回幂等结果
             if (request.idempotencyKey() != null) {
@@ -368,13 +257,26 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
             }
 
             outcome = AgentOutcome.SUCCESS;
+            String responseJson = safeToJson(result);
+            recordDebugEvent(
+                    AgentLoopDebugEvent.Phase.EXECUTE,
+                    desc.name(), desc.riskLevel(), requestJson,
+                    responseJson, "ALLOW", null);
             long latency = System.currentTimeMillis() - start;
             recordAudit(request, desc, responseJson, "SUCCESS", latency);
             metrics.recordToolInvocation(request.toolName(), outcome, latency);
             return new AgentResponse(request.toolName(), outcome, result, responseJson, latency, null);
 
+        } catch (HandoffRequiredException e) {
+            // Tool execution triggered business rule handoff
+            long latency = System.currentTimeMillis() - start;
+            List<String> toolChain = List.of(request.toolName());
+            HandoffContext hctx = HandoffContext.forBusinessRule(
+                    request.identity(), e.toolName(), e.reason(),
+                    e.matchedRules(), e.riskNote(), toolChain);
+            return buildHandoffResponse(request, registry.get(request.toolName()),
+                    hctx, "已转人工处理: 业务规则 [" + e.reason() + "] 命中", start);
         } catch (Exception e) {
-            // ToolNotFoundException / 反射调用异常 / 其他意外异常 → FAILURE
             String errorType = e.getClass().getSimpleName();
             long latency = System.currentTimeMillis() - start;
             metrics.recordErrorExecution(request.toolName(), errorType);
@@ -383,6 +285,99 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
             return new AgentResponse(request.toolName(), AgentOutcome.FAILURE, null,
                     "Tool execution failed: " + e.getMessage(), latency, null);
         }
+    }
+
+    /**
+     * Step 2: risk gate check. Returns a response if denied/handoff, empty if OK.
+     */
+    private Optional<AgentResponse> checkRiskGate(
+            ToolDescriptor desc, AgentRequest request,
+            String requestJson, Long amountCents, long start) {
+        try {
+            riskGate.check(desc, request.identity(), request.idempotencyKey(), amountCents);
+            tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "ALLOW", null);
+            recordDebugEvent(AgentLoopDebugEvent.Phase.VERIFY,
+                    desc.name(), desc.riskLevel(), requestJson, null, "ALLOW", null);
+            return Optional.empty();
+        } catch (AmountLimitExceededException e) {
+            tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "HANDOFF",
+                    "Amount limit exceeded: requested=" + e.requestedCents() + " limit=" + e.limitCents());
+            recordDebugEvent(AgentLoopDebugEvent.Phase.VERIFY,
+                    desc.name(), desc.riskLevel(), requestJson, null, "DENY", null);
+            return Optional.of(buildHandoffResponse(request, desc,
+                    HandoffContext.forAmountLimit(request.identity(), request.toolName(),
+                            e.requestedCents(), e.limitCents(), List.of(request.toolName())),
+                    "已转人工处理: ", start));
+        } catch (ToolRiskDeniedException e) {
+            tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "DENY", e.getMessage());
+            recordDebugEvent(AgentLoopDebugEvent.Phase.VERIFY,
+                    desc.name(), desc.riskLevel(), requestJson, null, "DENY", null);
+            if (desc.riskLevel() == RiskLevel.L4_HIGH_RISK) {
+                return Optional.of(buildHandoffResponse(request, desc,
+                        HandoffContext.forInsufficientPrivilege(request.identity(), request.toolName(),
+                                List.of(request.toolName())),
+                        "已转人工处理: 需要 admin 审批", start));
+            }
+            long latency = System.currentTimeMillis() - start;
+            recordAudit(request, desc, "{}", "DENIED", latency);
+            metrics.recordToolInvocation(request.toolName(), AgentOutcome.DENIED, latency);
+            return Optional.of(new AgentResponse(request.toolName(), AgentOutcome.DENIED, null,
+                    e.getMessage(), latency, null));
+        }
+    }
+
+    /**
+     * Step 3: idempotency check. Returns a replay response if already executed.
+     */
+    private Optional<AgentResponse> checkIdempotency(AgentRequest request, long start) {
+        if (request.idempotencyKey() == null) return Optional.empty();
+        var putResult = idemStore.putIfAbsent(request.idempotencyKey(), null);
+        if (putResult.isReplay()) {
+            tracer.logIdempotency(request.idempotencyKey().toString(), true);
+            metrics.recordIdempotencyReplay(request.toolName());
+            long latency = System.currentTimeMillis() - start;
+            metrics.recordToolInvocation(request.toolName(), AgentOutcome.REPLAY, latency);
+            return Optional.of(new AgentResponse(request.toolName(), AgentOutcome.REPLAY, putResult.value(),
+                    "(replay) " + safeToJson(putResult.value()), latency, null));
+        }
+        tracer.logIdempotency(request.idempotencyKey().toString(), false);
+        return Optional.empty();
+    }
+
+    /**
+     * Step 4: invoke tool with handoff-on-business-rule handling.
+     */
+    private Object executeTool(ToolDescriptor desc, AgentRequest request,
+                               String requestJson, long start) throws Exception {
+        try {
+            Object result = invokeWithInjection(desc, request);
+            long execDuration = System.currentTimeMillis() - start;
+            tracer.logExecution(desc.name(), safeToJson(request.requestPayload()),
+                    safeToJson(result), execDuration, "SUCCESS");
+            return result;
+        } catch (HandoffRequiredException e) {
+            long execDuration = System.currentTimeMillis() - start;
+            tracer.logExecution(desc.name(), safeToJson(request.requestPayload()),
+                    null, execDuration, "HANDOFF");
+            recordDebugEvent(AgentLoopDebugEvent.Phase.EXECUTE,
+                    desc.name(), desc.riskLevel(), requestJson,
+                    safeToJson(null), "HANDOFF", null);
+            throw e; // re-throw — caller handles
+        }
+    }
+
+    /** Build a handoff response (deduplicates 3 handoff paths). */
+    private AgentResponse buildHandoffResponse(
+            AgentRequest request, ToolDescriptor desc,
+            HandoffContext hctx, String messagePrefix, long start) {
+        handoffService.handoff(hctx);
+        var handoffPayload = new AgentResponse.HandoffContextPayload(
+                hctx.reason().name(), hctx.channel().name(),
+                hctx.summary(), hctx.toolChainJson());
+        long latency = System.currentTimeMillis() - start;
+        metrics.recordToolInvocation(request.toolName(), AgentOutcome.HANDOFF_REQUIRED, latency);
+        return new AgentResponse(request.toolName(), AgentOutcome.HANDOFF_REQUIRED, null,
+                messagePrefix + hctx.summary(), latency, handoffPayload);
     }
 
     private Object invokeWithInjection(ToolDescriptor desc, AgentRequest request) throws Exception {

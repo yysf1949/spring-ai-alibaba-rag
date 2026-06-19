@@ -145,3 +145,16 @@ rag:
       temperature: 0.2
   embedding:
     dim: ${SILICONFLOW_EMBEDDING_DIM:1024}
+  # ─────────────────────────────────────────────────────────────────
+  # Security — API key authentication
+  # ─────────────────────────────────────────────────────────────────
+  # When rag.security.api-key is set, all endpoints (except actuator
+  # health/readiness and Swagger UI) require the X-API-Key header.
+  # When blank, all endpoints are open (dev/test mode).
+  security:
+    api-key: ${RAG_API_KEY:}
+  tenant:
+    # HMAC-SHA256 shared secret for X-Tenant-Id header verification.
+    # When blank, tenant signature verification is DISABLED (dev/test only).
+    # Production: set via env var RAG_TENANT_SECRET.
+    shared-secret: ${RAG_TENANT_SECRET:}
