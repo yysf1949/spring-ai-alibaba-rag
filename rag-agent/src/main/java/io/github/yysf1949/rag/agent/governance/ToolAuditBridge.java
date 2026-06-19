@@ -3,6 +3,7 @@ package io.github.yysf1949.rag.agent.governance;
 import io.github.yysf1949.rag.core.port.LlmAuditHook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -35,7 +36,10 @@ public class ToolAuditBridge {
         this(hook, masker, null);
     }
 
-    public ToolAuditBridge(LlmAuditHook hook, SensitiveDataMasker masker, AgentMetrics agentMetrics) {
+    @Autowired
+    public ToolAuditBridge(LlmAuditHook hook,
+                           @Autowired(required = false) SensitiveDataMasker masker,
+                           @Autowired(required = false) AgentMetrics agentMetrics) {
         this.hook = hook == null ? LlmAuditHook.NOOP : hook;
         this.masker = masker == null ? new SensitiveDataMasker() : masker;
         this.agentMetrics = agentMetrics;

@@ -46,10 +46,14 @@ public class ComplaintTool {
             requiresConfirmationToken = true
     )
     public ComplaintResponse createComplaint(IdempotencyKey idempotencyKey, ComplaintRequest req) {
-        // 幂等检查
-        IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);
+        // 幂等检查 — use sentinel to distinguish "in-progress" from "completed"
+        IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, "PENDING");
         if (put.isReplay()) {
             String existingId = (String) put.value();
+            if ("PENDING".equals(existingId)) {
+                // Another thread is processing — return conflict
+                return new ComplaintResponse(null, "IN_PROGRESS", req.priority(), "投诉正在处理中，请勿重复提交");
+            }
             if (existingId != null) {
                 return new ComplaintResponse(existingId, "CREATED", req.priority(), "投诉已受理（幂等回放）");
             }

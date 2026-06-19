@@ -41,6 +41,11 @@ public class RedisPriceProtectionRepository implements PriceProtectionPort {
             hash.put("reason", record.reason() == null ? "" : record.reason());
             hash.put("idempotencyKey", record.idempotencyKey() == null ? "" : record.idempotencyKey());
             factory.jedis().hset(key, hash);
+            // Maintain secondary index: idempotencyKey → main key for O(1) lookup
+            if (record.idempotencyKey() != null && !record.idempotencyKey().isEmpty()) {
+                String idxKey = factory.key("price_protection_idx", record.tenantId(), record.idempotencyKey());
+                factory.jedis().set(idxKey, key);
+            }
             return record;
         } catch (Exception e) {
             throw new RuntimeException("Failed to save price protection record", e);
@@ -91,26 +96,27 @@ public class RedisPriceProtectionRepository implements PriceProtectionPort {
 
     @Override
     public Optional<PriceProtectionRecord> findByIdempotencyKey(String idempotencyKey, String tenantId) {
-        // Scan all price_protection keys for this tenant
-        var jedis = factory.jedis();
+        // O(1) lookup via secondary index instead of O(N) KEYS scan
         try {
-            var keys = jedis.keys(factory.key("price_protection", tenantId, "*"));
-            for (var key : keys) {
-                var fields = jedis.hgetAll(key);
-                if (idempotencyKey.equals(fields.get("idempotencyKey"))) {
-                    return Optional.of(new PriceProtectionRecord(
-                            fields.get("claimId"), fields.get("tenantId"), fields.get("userId"),
-                            fields.get("orderId"), fields.get("productId"),
-                            Long.parseLong(fields.getOrDefault("refundAmountCents", "0")),
-                            Long.parseLong(fields.getOrDefault("originalPriceCents", "0")),
-                            Long.parseLong(fields.getOrDefault("currentPriceCents", "0")),
-                            fields.get("status"), fields.get("reason"), fields.get("idempotencyKey")));
-                }
+            String idxKey = factory.key("price_protection_idx", tenantId, idempotencyKey);
+            String mainKey = factory.jedis().get(idxKey);
+            if (mainKey == null) {
+                return Optional.empty();
             }
-        } finally {
-            jedis.close();
+            var fields = factory.jedis().hgetAll(mainKey);
+            if (fields == null || fields.isEmpty()) {
+                return Optional.empty();
+            }
+            return Optional.of(new PriceProtectionRecord(
+                    fields.get("claimId"), fields.get("tenantId"), fields.get("userId"),
+                    fields.get("orderId"), fields.get("productId"),
+                    Long.parseLong(fields.getOrDefault("refundAmountCents", "0")),
+                    Long.parseLong(fields.getOrDefault("originalPriceCents", "0")),
+                    Long.parseLong(fields.getOrDefault("currentPriceCents", "0")),
+                    fields.get("status"), fields.get("reason"), fields.get("idempotencyKey")));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to find price protection by idempotency key", e);
         }
-        return Optional.empty();
     }
 
     @Override

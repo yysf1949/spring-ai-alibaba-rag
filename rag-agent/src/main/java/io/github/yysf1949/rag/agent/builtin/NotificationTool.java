@@ -54,7 +54,7 @@ public class NotificationTool {
             description = "发送站内通知给用户。支持5种模板：REFUND_CREATED(退款创建)、COUPON_ISSUED(优惠券发放)、ORDER_CANCELLED(订单取消)、TICKET_CREATED(工单创建)、HUMAN_HANDOFF(转人工)。500字符上限，5分钟内同用户同模板自动去重。返回通知ID和发送状态。适用于：退款/优惠券/取消/工单/转人工后通知用户。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
             idempotent = true,
-            requiresIdempotencyKey = true
+            requiresIdempotencyKey = false  // Uses repository-level 5-min dedup window instead
     )
     public NotificationResponse send(SendNotificationRequest req) {
         Objects.requireNonNull(req, "req");

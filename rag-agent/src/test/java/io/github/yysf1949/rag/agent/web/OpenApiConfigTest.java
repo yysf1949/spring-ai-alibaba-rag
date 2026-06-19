@@ -43,7 +43,7 @@ class OpenApiConfigTest {
         OpenAPI openAPI = config.customerServiceOpenAPI();
         Info info = openAPI.getInfo();
         assertThat(info).isNotNull();
-        assertThat(info.getVersion()).isEqualTo("1.0.0");
+        assertThat(info.getVersion()).isEqualTo("0.1.0-SNAPSHOT");
     }
 
     @Test

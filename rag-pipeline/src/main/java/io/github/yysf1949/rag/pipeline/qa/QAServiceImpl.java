@@ -351,12 +351,12 @@ public class QAServiceImpl implements QAService {
         int topN = DEFAULT_TOP_N;
         List<Chunk> reranked;
         try {
-            reranked = rerank(rewritten.rewritten(), retrieved, topN);
-            // Spec §9.1 — rag.qa.rerank.delta.score{tenant} (best-effort)
-            // Call rerankWithScores() to get real relevance scores from the concrete impl.
-            // The test stub overrides this to avoid double-capturing MDC.
+            // Use rerankWithScores() as the single call — avoids double API hit.
+            // The scored results give us both the reranked order and delta metrics.
+            List<RerankResult> scored = reranker.rerankWithScores(rewritten.rewritten(), retrieved, topN);
+            reranked = scored.stream().map(RerankResult::chunk).toList();
+            // Spec §9.1 — rag.qa.rerank.delta.score{tenant}
             try {
-                List<RerankResult> scored = reranker.rerankWithScores(rewritten.rewritten(), retrieved, topN);
                 if (scored.size() >= 2) {
                     double maxScore = scored.stream().mapToDouble(RerankResult::relevanceScore).max().orElse(0);
                     double minScore = scored.stream().mapToDouble(RerankResult::relevanceScore).min().orElse(0);

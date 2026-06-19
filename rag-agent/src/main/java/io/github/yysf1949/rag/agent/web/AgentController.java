@@ -11,6 +11,7 @@ import io.github.yysf1949.rag.agent.orchestration.ChatClientService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.MediaType;
@@ -52,9 +53,10 @@ import java.util.UUID;
 public class AgentController {
 
     private final AgentService agentService;
-    private final ChatClientService chatClientService;
+    private final ChatClientService chatClientService;  // nullable when ChatClient bean absent
 
     public AgentController(AgentService agentService,
+                           @org.springframework.beans.factory.annotation.Autowired(required = false)
                            ChatClientService chatClientService) {
         this.agentService = agentService;
         this.chatClientService = chatClientService;

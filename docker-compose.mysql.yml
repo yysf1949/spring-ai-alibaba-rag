@@ -1,17 +1,21 @@
-version: '3.8'
 services:
   mysql:
     image: mysql:8.0
     environment:
-      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-changeme}
       - MYSQL_DATABASE=agent
-      - MYSQL_USER=agent
-      - MYSQL_PASSWORD=agent
+      - MYSQL_USER=${MYSQL_USER:-agent}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-changeme}
     ports:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   agent:
     build: .
@@ -20,11 +24,12 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=mysql
       - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/agent
-      - SPRING_DATASOURCE_USERNAME=agent
-      - SPRING_DATASOURCE_PASSWORD=agent
+      - SPRING_DATASOURCE_USERNAME=${MYSQL_USER:-agent}
+      - SPRING_DATASOURCE_PASSWORD=${MYSQL_PASSWORD:-changeme}
       - SPRING_AI_OPENAI_API_KEY=${SPRING_AI_OPENAI_API_KEY}
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
 
 volumes:
   mysql-data:

@@ -73,6 +73,7 @@ public class RetrievalAdapter implements RetrievalPort {
      * pre-P2: pass {@code requested} through unchanged and rely on each
      * backend's internal {@code 0 = active} convention.</p>
      */
+    @Autowired
     public RetrievalAdapter(VectorStore vectorStore,
                             EmbeddingGateway embeddingGateway,
                             @Autowired(required = false) KbVersionService kbVersionService,

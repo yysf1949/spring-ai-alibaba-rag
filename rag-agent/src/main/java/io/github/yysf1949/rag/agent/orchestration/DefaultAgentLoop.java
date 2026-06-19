@@ -25,6 +25,7 @@ import io.github.yysf1949.rag.agent.handoff.HandoffContext;
 import io.github.yysf1949.rag.agent.handoff.HandoffService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
@@ -87,6 +88,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
     /**
      * 完整构造 — 含租户级限流。
      */
+    @Autowired
     public DefaultAgentLoop(ToolRegistry registry, RiskGate riskGate,
                             IdempotencyStore idemStore, ToolAuditBridge auditBridge,
                             AgentMetrics metrics, HandoffService handoffService,

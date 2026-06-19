@@ -75,6 +75,9 @@ public class IngestServiceImpl implements IngestService {
     /** Default embedding batch size (chunk texts per API call). */
     public static final int DEFAULT_EMBED_BATCH = 32;
 
+    /** Fallback kbId when composite documentId has no kb prefix. */
+    private static final String FALLBACK_KB_ID = "default-kb";
+
     private final ChunkSplitter splitter;
     private final EmbeddingGateway embeddingGateway;
     private final VectorStore vectorStore;
@@ -462,7 +465,9 @@ public class IngestServiceImpl implements IngestService {
         if (slash < 0) {
             // Plain documentId without kb prefix — fall back to a single
             // shared kb so the publish() call doesn't blow up.
-            return "default-kb";
+            log.warn("DocumentId '{}' has no kb prefix, falling back to '{}'",
+                    compositeDocumentId, FALLBACK_KB_ID);
+            return FALLBACK_KB_ID;
         }
         return compositeDocumentId.substring(0, slash);
     }

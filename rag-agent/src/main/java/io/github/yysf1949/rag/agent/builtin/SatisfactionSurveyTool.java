@@ -75,9 +75,11 @@ public class SatisfactionSurveyTool {
             idempotent = true,
             requiresIdempotencyKey = false
     )
-    public List<SatisfactionSurveyPort.SurveyRecord> listByConversation(String conversationId) {
-        return repo.findByConversation(conversationId);
+    public List<SatisfactionSurveyPort.SurveyRecord> listByConversation(ListSurveysRequest req) {
+        return repo.findByConversation(req.conversationId());
     }
+
+    public record ListSurveysRequest(String conversationId) {}
 
     public record SurveyRequest(
             String tenantId,

@@ -315,9 +315,8 @@ class QAServiceImplMdcTest {
             return candidates.subList(0, Math.min(topN, candidates.size()));
         }
         @Override public List<RerankResult> rerankWithScores(String query, List<Chunk> candidates, int topN) {
-            // Do NOT capture MDC — the main rerank() call already did.
-            // Do NOT call rerank() — that would double-invoke the stub.
-            // Just return scored results directly.
+            // Capture MDC — this is now the primary rerank call path.
+            if (captureMdc != null) captureMdc.accept(MDC.getCopyOfContextMap());
             if (toThrow != null) throw toThrow;
             List<Chunk> chunks = candidates.subList(0, Math.min(topN, candidates.size()));
             return chunks.stream()

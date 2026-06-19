@@ -92,7 +92,7 @@ class SatisfactionSurveyToolTest {
         var resp = tool.submitSurvey(key("srv-p"),
                 new SatisfactionSurveyTool.SurveyRequest(
                         "tenant-1", "user-1", "conv-1", 4, "good", true));
-        var records = tool.listByConversation("conv-1");
+        var records = tool.listByConversation(new SatisfactionSurveyTool.ListSurveysRequest("conv-1"));
         assertThat(records).hasSize(1);
         assertThat(records.get(0).surveyId()).isEqualTo(resp.surveyId());
         assertThat(records.get(0).rating()).isEqualTo(4);
