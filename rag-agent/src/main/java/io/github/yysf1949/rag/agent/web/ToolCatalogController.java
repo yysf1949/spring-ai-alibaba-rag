@@ -3,10 +3,12 @@ package io.github.yysf1949.rag.agent.web;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolDescriptor;
 import io.github.yysf1949.rag.agent.action.ToolRegistry;
+import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -63,5 +65,21 @@ public class ToolCatalogController {
                             d.requiresConfirmationToken());
                 })
                 .toList();
+    }
+
+    @GetMapping("/{name}")
+    @Operation(
+            summary = "按名称查询单个工具",
+            description = "返回指定工具的名称、描述、风险等级等元数据；工具不存在时返回 404。")
+    public ToolSummary getTool(@PathVariable String name) {
+        ToolDescriptor d = toolRegistry.get(name);
+        return new ToolSummary(
+                d.name(),
+                d.description(),
+                d.riskLevel(),
+                d.idempotent(),
+                d.requiresIdempotencyKey(),
+                d.maxAmountCents(),
+                d.requiresConfirmationToken());
     }
 }
