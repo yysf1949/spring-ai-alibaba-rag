@@ -41,4 +41,16 @@ public class H2SatisfactionSurveyRepository implements SatisfactionSurveyPort {
         return jdbc.query("SELECT * FROM agent_satisfaction_survey WHERE conversation_id = ?",
                 MAPPER, conversationId);
     }
+
+    @Override
+    public long countAll() {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM agent_satisfaction_survey", Long.class);
+        return count == null ? 0 : count;
+    }
+
+    @Override
+    public long countResolved() {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM agent_satisfaction_survey WHERE resolved = TRUE", Long.class);
+        return count == null ? 0 : count;
+    }
 }

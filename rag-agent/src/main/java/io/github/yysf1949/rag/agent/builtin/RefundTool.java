@@ -39,7 +39,7 @@ public class RefundTool {
             description = "创建退款申请，需提供确认令牌(confirmationToken)。退款金额≤500元可自动审批，>500元需人工审批。"
                     + "幂等防重复退款。触发业务规则(组合优惠/退款期/支付渠道)时自动转人工。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
-            idempotent = false,
+            idempotent = true,
             requiresIdempotencyKey = true,
             maxAmountCents = 500_00L,  // 500 元上限
             requiresConfirmationToken = true  // Phase 21: 文章要求"用户明确确认"

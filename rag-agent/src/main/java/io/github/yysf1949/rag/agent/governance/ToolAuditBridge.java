@@ -12,26 +12,10 @@ import java.security.MessageDigest;
  * 工具调用审计桥接 — 复用 {@code rag-core} 已有的
  * {@link LlmAuditHook} 通道（spec §21，rag-app AuditChannel 实现）。
  *
- * <h2>为什么走 LlmAuditHook 而不是新写一套</h2>
- * <ul>
- *   <li>现有 audit appender（90 天 RollingFile）+ Kafka 出口直接复用</li>
- *   <li>对齐设计原则 §11 spec 优先 — 不要造平行管道</li>
- *   <li>治理层跟 LLM 调用的 audit 都进同一个通道，方便合规检索</li>
- * </ul>
- *
- * <h2>字段映射</h2>
- * <ul>
- *   <li>{@code queryHash} ← SHA-256(requestJson)</li>
- *   <li>{@code modelId}   ← 固定 {@code "agent:<toolName>"}</li>
- *   <li>{@code promptTemplate} ← 固定 {@code "agent-tool-call"}</li>
- *   <li>{@code promptBody} ← 工具名 + 请求 JSON</li>
- *   <li>{@code completion} ← 响应 JSON + outcome 标签</li>
- *   <li>{@code outcome}   ← SUCCESS / FAILURE / DENIED</li>
- * </ul>
- *
- * <h2>Phase 13a 改造</h2>
- * <p>{@link SensitiveDataMasker} 在写 audit 前对 requestJson / responseJson / promptBody
- * 做脱敏（身份证 / 银行卡 / 手机号 / 邮箱 / 地址），让审计仍可追溯行为但不再含明文 PII。</p>
+ * <h2>Phase 14 增强：业务指标记录</h2>
+ * <p>在审计记录之外，根据工具调用结果同步记录业务指标：
+ * FAILURE → recordBusinessError, HANDOFF_REQUIRED → recordHandoffQuality,
+ * 确认令牌被拒绝 → recordConfirmation(tool, false)。</p>
  */
 @Component
 public class ToolAuditBridge {
@@ -41,14 +25,20 @@ public class ToolAuditBridge {
 
     private final LlmAuditHook hook;
     private final SensitiveDataMasker masker;
+    private final AgentMetrics agentMetrics;
 
     public ToolAuditBridge(LlmAuditHook hook) {
-        this(hook, new SensitiveDataMasker());
+        this(hook, new SensitiveDataMasker(), null);
     }
 
     public ToolAuditBridge(LlmAuditHook hook, SensitiveDataMasker masker) {
+        this(hook, masker, null);
+    }
+
+    public ToolAuditBridge(LlmAuditHook hook, SensitiveDataMasker masker, AgentMetrics agentMetrics) {
         this.hook = hook == null ? LlmAuditHook.NOOP : hook;
         this.masker = masker == null ? new SensitiveDataMasker() : masker;
+        this.agentMetrics = agentMetrics;
     }
 
     public void record(ToolInvocationContext ctx) {
@@ -73,10 +63,52 @@ public class ToolAuditBridge {
                     completion,
                     ctx.latencyMs(),
                     ctx.outcome());
+
+            // 业务指标增强 — 区分治理层错误 vs 业务错误
+            recordBusinessMetrics(ctx);
+
         } catch (Exception e) {
             // LlmAuditHook contract: never throws. Absorb errors per spec §21.
             log.warn("ToolAuditBridge failed to record audit for tool [{}]: {}",
                     ctx.toolName(), e.getMessage());
+        }
+    }
+
+    /**
+     * 根据工具调用结果记录业务指标。
+     * <ul>
+     *   <li>FAILURE → recordBusinessError（业务执行错误）</li>
+     *   <li>HANDOFF_REQUIRED → recordHandoffQuality（转人工质量）</li>
+     * </ul>
+     */
+    private void recordBusinessMetrics(ToolInvocationContext ctx) {
+        if (agentMetrics == null) return;
+
+        String outcome = ctx.outcome();
+        if ("FAILURE".equals(outcome)) {
+            agentMetrics.recordBusinessError(ctx.toolName(), "TOOL_FAILURE");
+        } else if ("HANDOFF_REQUIRED".equals(outcome)) {
+            // 默认有上下文（请求 JSON 不为空即认为有上下文）
+            boolean hasContext = ctx.requestJson() != null && !ctx.requestJson().isEmpty();
+            agentMetrics.recordHandoffQuality(hasContext, "HANDOFF_REQUIRED");
+        }
+    }
+
+    /**
+     * 记录用户确认拒绝 — 调用方在确认令牌被拒绝时调用此方法。
+     */
+    public void recordConfirmationRejected(String toolName) {
+        if (agentMetrics != null) {
+            agentMetrics.recordConfirmation(toolName, false);
+        }
+    }
+
+    /**
+     * 记录用户确认接受 — 调用方在确认令牌被接受时调用此方法。
+     */
+    public void recordConfirmationAccepted(String toolName) {
+        if (agentMetrics != null) {
+            agentMetrics.recordConfirmation(toolName, true);
         }
     }
 

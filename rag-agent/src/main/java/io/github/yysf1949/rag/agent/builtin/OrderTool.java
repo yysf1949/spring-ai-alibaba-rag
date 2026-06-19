@@ -3,6 +3,8 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.OrderRepositoryPort;
+import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
+import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -28,9 +30,11 @@ public class OrderTool {
     public static final long CANCEL_MAX_AMOUNT_CENTS = 100_00L;
 
     private final OrderRepositoryPort repo;
+    private final IdempotencyStore idempotencyStore;
 
-    public OrderTool(OrderRepositoryPort repo) {
+    public OrderTool(OrderRepositoryPort repo, IdempotencyStore idempotencyStore) {
         this.repo = repo;
+        this.idempotencyStore = idempotencyStore;
     }
 
     @ToolSpec(
@@ -69,11 +73,21 @@ public class OrderTool {
             description = "取消CREATED或PAID状态的订单。单笔≤100元可自动执行，超过100元需转人工。"
                     + "幂等：已取消订单直接返回当前状态。不支持取消已发货/已签收订单。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
-            idempotent = false,
+            idempotent = true,
             requiresIdempotencyKey = true,
-            maxAmountCents = 100_00L  // 100 元上限
+            maxAmountCents = 100_00L,  // 100 元上限
+            requiresConfirmationToken = true
     )
-    public CancelOrderResponse cancelOrder(CancelOrderRequest req) {
+    public CancelOrderResponse cancelOrder(IdempotencyKey idempotencyKey, CancelOrderRequest req) {
+        // 幂等检查 — 文章: '即使模型重复调用，系统也应该返回第一次的执行结果'
+        IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);
+        if (put.isReplay()) {
+            String existingStatus = (String) put.value();
+            if (existingStatus != null) {
+                return new CancelOrderResponse(req.orderId(), existingStatus, req.reason());
+            }
+        }
+
         var order = repo.findByIdAndTenant(req.orderId(), req.tenantId())
                 .orElseThrow(() -> new IllegalArgumentException("Order not found: " + req.orderId()));
         // 幂等：已经是 CANCELLED 的订单，直接返回当前状态，不重复写
@@ -88,6 +102,8 @@ public class OrderTool {
                 order.orderId(), order.tenantId(), order.userId(),
                 order.amountCents(), "CANCELLED");
         repo.save(cancelled);
+        // 回填幂等结果
+        idempotencyStore.replace(idempotencyKey, "CANCELLED");
         return new CancelOrderResponse(order.orderId(), "CANCELLED", req.reason());
     }
 

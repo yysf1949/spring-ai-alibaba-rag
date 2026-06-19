@@ -6,6 +6,8 @@ import io.github.yysf1949.rag.agent.builtin.port.MemberProfileRepositoryPort;
 import io.github.yysf1949.rag.agent.builtin.store.*;
 import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
 import org.junit.jupiter.api.BeforeEach;
+import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
+import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -60,18 +62,18 @@ class CustomerServiceScenarioTest {
         idemStore = new InMemoryIdempotencyStore();
 
         // tools
-        orderTool = new OrderTool(orderRepo);
+        orderTool = new OrderTool(orderRepo, idemStore);
         logisticsTool = new LogisticsTool();
         paymentChannelTool = new PaymentChannelTool();
         refundRuleTool = new RefundRuleTool(paymentChannelTool);
         refundCalculatorTool = new RefundCalculatorTool(refundRuleTool, orderRepo);
         refundTool = new RefundTool(refundRepo, refundRuleTool);
         complaintTool = new ComplaintTool(complaintRepo, idemStore);
-        couponTool = new CouponTool(couponRepo);
+        couponTool = new CouponTool(couponRepo, idemStore);
         memberBenefitsTool = new MemberBenefitsTool(memberRepo);
         notificationTool = new NotificationTool(notificationRepo);
-        surveyTool = new SatisfactionSurveyTool(surveyRepo);
-        afterServiceTool = new AfterServiceTool(auditRepo, notificationRepo);
+        surveyTool = new SatisfactionSurveyTool(surveyRepo, idemStore);
+        afterServiceTool = new AfterServiceTool(auditRepo, notificationRepo, idemStore);
     }
 
     // ────────────────────────────────────────────────────────────
@@ -107,6 +109,7 @@ class CustomerServiceScenarioTest {
 
         // 6. 执行售后善后（退款确认）
         var afterServiceResp = afterServiceTool.execute(
+                IdempotencyKey.of("tenant-1", "user-1", "test-session", "execute_after_service", "confirm-tok"),
                 new AfterServiceTool.AfterServiceRequest(
                         "tenant-1", "user-1", "ORD-A1", "REFUND_CONFIRMED", 150_00L, null));
         assertThat(afterServiceResp.success()).isTrue();
@@ -123,6 +126,7 @@ class CustomerServiceScenarioTest {
 
         // 7. 满意度调查
         var surveyResp = surveyTool.submitSurvey(
+                IdempotencyKey.of("tenant-1", "user-1", "test-session", "submit_satisfaction_survey", "confirm-tok"),
                 new SatisfactionSurveyTool.SurveyRequest(
                         "tenant-1", "user-1", "conv-a1", 4, "退款处理很快", true));
         assertThat(surveyResp.surveyId()).startsWith("SRV-");
@@ -148,17 +152,18 @@ class CustomerServiceScenarioTest {
 
         // 3. 创建投诉工单
         var complaintResp = complaintTool.createComplaint(
+                io.github.yysf1949.rag.agent.governance.IdempotencyKey.of(
+                        "tenant-1", "user-2", "s1", "create_complaint", "token-b1"),
                 new ComplaintTool.ComplaintRequest(
                         "tenant-1", "user-2", "ORD-B1", "LOGISTICS",
-                        "显示已签收但实际未收到包裹", "P2"),
-                io.github.yysf1949.rag.agent.governance.IdempotencyKey.of(
-                        "tenant-1", "user-2", "s1", "create_complaint", "token-b1"));
+                        "显示已签收但实际未收到包裹", "P2"));
         assertThat(complaintResp.complaintId()).startsWith("CMP-");
         assertThat(complaintResp.status()).isEqualTo("CREATED");
         assertThat(complaintResp.priority()).isEqualTo("P2");
 
         // 4. 执行售后善后（投诉升级）
         var afterServiceResp = afterServiceTool.execute(
+                IdempotencyKey.of("tenant-1", "user-1", "test-session", "execute_after_service", "confirm-tok"),
                 new AfterServiceTool.AfterServiceRequest(
                         "tenant-1", "user-2", "ORD-B1", "COMPLAINT_ESCALATED",
                         0, "显示已签收但实际未收到"));
@@ -183,11 +188,11 @@ class CustomerServiceScenarioTest {
     void scenarioC_couponCompensationFlow() {
         // 1. 创建投诉
         var complaintResp = complaintTool.createComplaint(
+                io.github.yysf1949.rag.agent.governance.IdempotencyKey.of(
+                        "tenant-1", "user-3", "s1", "create_complaint", "token-c1"),
                 new ComplaintTool.ComplaintRequest(
                         "tenant-1", "user-3", "ORD-C1", "QUALITY",
-                        "商品有质量问题", "P2"),
-                io.github.yysf1949.rag.agent.governance.IdempotencyKey.of(
-                        "tenant-1", "user-3", "s1", "create_complaint", "token-c1"));
+                        "商品有质量问题", "P2"));
         assertThat(complaintResp.complaintId()).startsWith("CMP-");
 
         // 2. 查询会员权益（预置 GOLD 会员）
@@ -202,6 +207,7 @@ class CustomerServiceScenarioTest {
         long couponAmount = memberResp.couponDiscountCents() > 0
                 ? memberResp.couponDiscountCents() : 10_00L;
         var couponResp = couponTool.issueCoupon(
+                IdempotencyKey.of("tenant-1", "user-1", "test-session", "issue_coupon", "confirm-tok"),
                 new CouponTool.IssueCouponRequest(
                         "tenant-1", "user-3", "ORD-C1", couponAmount, "COMPLAINT_COMPENSATION"));
         assertThat(couponResp.couponId()).startsWith("CPN-");
@@ -210,6 +216,7 @@ class CustomerServiceScenarioTest {
 
         // 4. 满意度调查
         var surveyResp = surveyTool.submitSurvey(
+                IdempotencyKey.of("tenant-1", "user-1", "test-session", "submit_satisfaction_survey", "confirm-tok"),
                 new SatisfactionSurveyTool.SurveyRequest(
                         "tenant-1", "user-3", "conv-c1", 3, "补偿还行，但希望改进质量", true));
         assertThat(surveyResp.surveyId()).startsWith("SRV-");

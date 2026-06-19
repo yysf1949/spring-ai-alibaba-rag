@@ -79,9 +79,9 @@ class AgentToolStoreIntegrationTest {
         idemStore = new InMemoryIdempotencyStore();
 
         // 初始化 tools
-        orderTool = new OrderTool(orderRepo);
+        orderTool = new OrderTool(orderRepo, idemStore);
         ticketTool = new TicketTool(ticketRepo, idemStore);
-        couponTool = new CouponTool(couponRepo);
+        couponTool = new CouponTool(couponRepo, idemStore);
     }
 
     // ---- OrderTool → H2 ----
@@ -105,7 +105,9 @@ class AgentToolStoreIntegrationTest {
         assertThat(listResp.orders().get(0).orderId()).isEqualTo("ORD-H2-001");
 
         // 取消 (L3)
-        var cancelResp = orderTool.cancelOrder(new OrderTool.CancelOrderRequest(
+        var cancelResp = orderTool.cancelOrder(
+                IdempotencyKey.of("t1", "u1", "test-session", "cancel_order", "confirm-tok"),
+                new OrderTool.CancelOrderRequest(
                 "t1", "u1", "ORD-H2-001", 29900L, "用户主动取消"));
         assertThat(cancelResp.status()).isEqualTo("CANCELLED");
 
@@ -157,7 +159,9 @@ class AgentToolStoreIntegrationTest {
     @Test
     @DisplayName("CouponTool: 发放优惠券 → H2 查询 → 列表验证")
     void couponTool_grantAndQuery_h2RoundTrip() {
-        var resp = couponTool.issueCoupon(new CouponTool.IssueCouponRequest(
+        var resp = couponTool.issueCoupon(
+                IdempotencyKey.of("t1", "u1", "test-session", "issue_coupon", "confirm-tok"),
+                new CouponTool.IssueCouponRequest(
                 "t1", "u1", "ORD-001", 5000L, "WELCOME_BACK"));
         assertThat(resp.couponId()).startsWith("CPN-");
         assertThat(resp.amountCents()).isEqualTo(5000L);
@@ -168,7 +172,9 @@ class AgentToolStoreIntegrationTest {
         assertThat(active.get(0).amountCents()).isEqualTo(5000L);
 
         // 再发一张 + 列表
-        couponTool.issueCoupon(new CouponTool.IssueCouponRequest(
+        couponTool.issueCoupon(
+                IdempotencyKey.of("t1", "u1", "test-session", "issue_coupon", "confirm-tok-2"),
+                new CouponTool.IssueCouponRequest(
                 "t1", "u1", "ORD-002", 3000L, "LOYALTY"));
         var listResp = couponTool.listActiveCoupons(new CouponTool.ListCouponsRequest("t1", "u1"));
         assertThat(listResp.coupons()).hasSize(2);
@@ -178,7 +184,9 @@ class AgentToolStoreIntegrationTest {
     @DisplayName("CouponTool: 超限发放 → AmountLimitExceededException")
     void couponTool_overLimit_throwsHandoff() {
         assertThatThrownBy(() ->
-                couponTool.issueCoupon(new CouponTool.IssueCouponRequest(
+                couponTool.issueCoupon(
+                IdempotencyKey.of("t1", "u1", "test-session", "issue_coupon", "confirm-tok"),
+                new CouponTool.IssueCouponRequest(
                         "t1", "u1", "ORD-001", 50000L, "BIG_REWARD")))
                 .isInstanceOf(io.github.yysf1949.rag.agent.exception.AmountLimitExceededException.class);
     }
@@ -216,7 +224,9 @@ class AgentToolStoreIntegrationTest {
                 new TicketTool.Request("order-issue", "订单 ORD-CROSS 商品质量问题"));
 
         // 3. 补发优惠券
-        couponTool.issueCoupon(new CouponTool.IssueCouponRequest(
+        couponTool.issueCoupon(
+                IdempotencyKey.of("t1", "u1", "test-session", "issue_coupon", "confirm-tok"),
+                new CouponTool.IssueCouponRequest(
                 "t1", "u1", "ORD-CROSS", 10000L, "COMPENSATION"));
 
         // 验证: 3 个表都有数据

@@ -4,6 +4,8 @@ import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.AfterServiceAuditPort;
 import io.github.yysf1949.rag.agent.builtin.port.NotificationRepositoryPort;
+import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
+import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -20,21 +22,34 @@ public class AfterServiceTool {
 
     private final AfterServiceAuditPort auditRepo;
     private final NotificationRepositoryPort notificationRepo;
+    private final IdempotencyStore idempotencyStore;
 
-    public AfterServiceTool(AfterServiceAuditPort auditRepo, NotificationRepositoryPort notificationRepo) {
+    public AfterServiceTool(AfterServiceAuditPort auditRepo, NotificationRepositoryPort notificationRepo,
+                            IdempotencyStore idempotencyStore) {
         this.auditRepo = Objects.requireNonNull(auditRepo, "auditRepo");
         this.notificationRepo = Objects.requireNonNull(notificationRepo, "notificationRepo");
+        this.idempotencyStore = Objects.requireNonNull(idempotencyStore, "idempotencyStore");
     }
 
     @ToolSpec(
             name = "execute_after_service",
             description = "执行售后善后操作（退款确认/取消确认/投诉升级），记录审计链路并发送用户通知。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
-            idempotent = false,
-            requiresIdempotencyKey = true
+            idempotent = true,
+            requiresIdempotencyKey = true,
+            requiresConfirmationToken = true
     )
-    public AfterServiceResponse execute(AfterServiceRequest req) {
+    public AfterServiceResponse execute(IdempotencyKey idempotencyKey, AfterServiceRequest req) {
         Objects.requireNonNull(req, "req");
+
+        // 幂等检查 — 文章: '即使模型重复调用，系统也应该返回第一次的执行结果'
+        IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);
+        if (put.isReplay()) {
+            String existingId = (String) put.value();
+            if (existingId != null) {
+                return new AfterServiceResponse(existingId, req.actionType(), List.of("幂等回放"), true);
+            }
+        }
 
         List<String> steps = new ArrayList<>();
         String auditId = "AUD-" + java.util.UUID.randomUUID().toString().substring(0, 8);
@@ -72,6 +87,8 @@ public class AfterServiceTool {
                 auditId, req.orderId(), req.actionType(), steps, true, System.currentTimeMillis());
         auditRepo.save(auditRecord);
 
+        // 回填幂等结果
+        idempotencyStore.replace(idempotencyKey, auditId);
         return new AfterServiceResponse(auditId, req.actionType(), steps, true);
     }
 

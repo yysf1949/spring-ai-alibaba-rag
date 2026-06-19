@@ -73,4 +73,32 @@ public class RedisSatisfactionSurveyRepository implements SatisfactionSurveyPort
             throw new RuntimeException("Failed to find surveys by conversation", e);
         }
     }
+
+    @Override
+    public long countAll() {
+        try {
+            var keys = factory.jedis().keys(factory.key("survey", "*"));
+            return keys == null ? 0 : keys.size();
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    @Override
+    public long countResolved() {
+        try {
+            var keys = factory.jedis().keys(factory.key("survey", "*"));
+            if (keys == null) return 0;
+            long resolved = 0;
+            for (String key : keys) {
+                String val = factory.jedis().hget(key, "resolved");
+                if (Boolean.parseBoolean(val)) {
+                    resolved++;
+                }
+            }
+            return resolved;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
 }

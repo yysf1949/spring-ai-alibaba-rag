@@ -3,6 +3,8 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.CouponRepositoryPort;
+import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
+import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -17,9 +19,11 @@ public class CouponTool {
     public static final long ISSUE_MAX_AMOUNT_CENTS = 200_00L;
 
     private final CouponRepositoryPort repo;
+    private final IdempotencyStore idempotencyStore;
 
-    public CouponTool(CouponRepositoryPort repo) {
+    public CouponTool(CouponRepositoryPort repo, IdempotencyStore idempotencyStore) {
         this.repo = repo;
+        this.idempotencyStore = idempotencyStore;
     }
 
     @ToolSpec(
@@ -27,11 +31,21 @@ public class CouponTool {
             description = "补发优惠券，单张≤200元可自动执行，>200元需转人工审批。"
                     + "适用场景：售后补偿、活动奖励、客户挽留。调用方必须传 idempotencyKey 防重复发放。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
-            idempotent = false,
+            idempotent = true,
             requiresIdempotencyKey = true,
-            maxAmountCents = 200_00L  // 200 元上限
+            maxAmountCents = 200_00L,  // 200 元上限
+            requiresConfirmationToken = true
     )
-    public IssueCouponResponse issueCoupon(IssueCouponRequest req) {
+    public IssueCouponResponse issueCoupon(IdempotencyKey idempotencyKey, IssueCouponRequest req) {
+        // 幂等检查 — 文章: '即使模型重复调用，系统也应该返回第一次的执行结果'
+        IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);
+        if (put.isReplay()) {
+            String existingId = (String) put.value();
+            if (existingId != null) {
+                return new IssueCouponResponse(existingId, req.amountCents(), "ACTIVE");
+            }
+        }
+
         if (req.amountCents() > ISSUE_MAX_AMOUNT_CENTS) {
             throw new io.github.yysf1949.rag.agent.exception.AmountLimitExceededException(
                     "issue_coupon", req.amountCents(), ISSUE_MAX_AMOUNT_CENTS);
@@ -41,6 +55,8 @@ public class CouponTool {
                 req.tenantId(), req.userId(), req.orderId(),
                 req.amountCents(), req.reasonTag(), "ACTIVE");
         repo.save(coupon);
+        // 回填幂等结果
+        idempotencyStore.replace(idempotencyKey, coupon.couponId());
         return new IssueCouponResponse(coupon.couponId(), coupon.amountCents(), coupon.status());
     }
 

@@ -3,6 +3,8 @@ package io.github.yysf1949.rag.agent.builtin;
 import io.github.yysf1949.rag.agent.action.RiskLevel;
 import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.SatisfactionSurveyPort;
+import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
+import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -17,20 +19,31 @@ import java.util.Objects;
 public class SatisfactionSurveyTool {
 
     private final SatisfactionSurveyPort repo;
+    private final IdempotencyStore idempotencyStore;
 
-    public SatisfactionSurveyTool(SatisfactionSurveyPort repo) {
+    public SatisfactionSurveyTool(SatisfactionSurveyPort repo, IdempotencyStore idempotencyStore) {
         this.repo = Objects.requireNonNull(repo, "repo");
+        this.idempotencyStore = Objects.requireNonNull(idempotencyStore, "idempotencyStore");
     }
 
     @ToolSpec(
             name = "submit_satisfaction_survey",
             description = "提交用户满意度调查（评分 1-5 + 文字反馈 + 是否已解决）。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
-            idempotent = false,
-            requiresIdempotencyKey = false
+            idempotent = true,
+            requiresIdempotencyKey = true
     )
-    public SurveyResponse submitSurvey(SurveyRequest req) {
+    public SurveyResponse submitSurvey(IdempotencyKey idempotencyKey, SurveyRequest req) {
         Objects.requireNonNull(req, "req");
+
+        // 幂等检查 — 文章: '即使模型重复调用，系统也应该返回第一次的执行结果'
+        IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);
+        if (put.isReplay()) {
+            String existingId = (String) put.value();
+            if (existingId != null) {
+                return new SurveyResponse(existingId, req.rating(), req.resolved(), "感谢您的反馈！（幂等回放）");
+            }
+        }
 
         // 评分范围校验
         if (req.rating() < 1 || req.rating() > 5) {
@@ -50,6 +63,8 @@ public class SatisfactionSurveyTool {
                 System.currentTimeMillis());
         repo.save(record);
 
+        // 回填幂等结果
+        idempotencyStore.replace(idempotencyKey, surveyId);
         return new SurveyResponse(surveyId, req.rating(), req.resolved(), "感谢您的反馈！");
     }
 

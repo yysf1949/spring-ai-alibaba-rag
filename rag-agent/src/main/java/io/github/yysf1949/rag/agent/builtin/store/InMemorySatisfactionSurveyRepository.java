@@ -36,4 +36,14 @@ public class InMemorySatisfactionSurveyRepository implements SatisfactionSurveyP
         }
         return out;
     }
+
+    @Override
+    public long countAll() {
+        return store.size();
+    }
+
+    @Override
+    public long countResolved() {
+        return store.values().stream().filter(SatisfactionSurveyPort.SurveyRecord::resolved).count();
+    }
 }

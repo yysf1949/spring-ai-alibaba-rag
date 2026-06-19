@@ -56,7 +56,7 @@ public class TicketTool {
                     + "适用场景：(1)知识库查不到答案需人工跟进 (2)用户要求转人工 (3)退款/投诉超出自动处理范围。"
                     + "调用方必须传 idempotencyKey；同key重复调用返回上次结果(幂等)。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
-            idempotent = false,
+            idempotent = true,
             requiresIdempotencyKey = true)
     public Response createReminder(AgentIdentity identity, IdempotencyKey idempotencyKey, Request request) {
         IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);

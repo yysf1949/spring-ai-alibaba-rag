@@ -5,6 +5,7 @@ import io.github.yysf1949.rag.agent.action.ToolSpec;
 import io.github.yysf1949.rag.agent.builtin.port.PriceProtectionPort;
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryPriceProtectionRepository;
 import io.github.yysf1949.rag.agent.exception.AmountLimitExceededException;
+import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import org.springframework.stereotype.Component;
 
 /**
@@ -66,11 +67,12 @@ public class PriceProtectionTool {
             name = "apply_price_protection",
             description = "申请价保退差价（单笔差价 ≤ 200 元自动处理，超过需转人工审批）。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
-            idempotent = false,
+            idempotent = true,
             requiresIdempotencyKey = true,
-            maxAmountCents = 200_00L  // 200 元上限
+            maxAmountCents = 200_00L,  // 200 元上限
+            requiresConfirmationToken = true
     )
-    public ApplyResponse applyPriceProtection(ApplyRequest req) {
+    public ApplyResponse applyPriceProtection(IdempotencyKey idempotencyKey, ApplyRequest req) {
         // 0. 幂等检查：同一 idempotencyKey 已存在的申请直接返回
         var existing = repoImpl.findByIdempotencyKey(req.idempotencyKey(), req.tenantId());
         if (existing.isPresent()) {

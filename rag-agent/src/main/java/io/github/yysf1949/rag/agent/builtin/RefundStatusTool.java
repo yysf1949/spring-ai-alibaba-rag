@@ -54,7 +54,7 @@ public class RefundStatusTool {
             description = "取消 PENDING 状态的退款申请（已审批通过的不能取消，需转人工）。"
                     + "适用于：用户说'我不想退了'、'取消退款申请'。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
-            idempotent = false,
+            idempotent = true,
             requiresIdempotencyKey = true
     )
     public CancelRefundResponse cancelRefund(CancelRefundRequest req) {

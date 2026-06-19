@@ -41,11 +41,12 @@ public class ComplaintTool {
             description = "创建投诉工单。记录投诉类型(商品质量/物流问题/服务态度/退款纠纷)、描述、优先级(P0紧急~P3低)。"
                     + "高优先级(P0)投诉自动升级转人工客服。适用于：用户明确表达不满、要求投诉、需升级处理。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
-            idempotent = false,
+            idempotent = true,
             requiresIdempotencyKey = true,
-            maxAmountCents = -1L
+            maxAmountCents = -1L,
+            requiresConfirmationToken = true
     )
-    public ComplaintResponse createComplaint(ComplaintRequest req, IdempotencyKey idempotencyKey) {
+    public ComplaintResponse createComplaint(IdempotencyKey idempotencyKey, ComplaintRequest req) {
         // 幂等检查
         IdempotencyStore.PutResult put = idempotencyStore.putIfAbsent(idempotencyKey, null);
         if (put.isReplay()) {

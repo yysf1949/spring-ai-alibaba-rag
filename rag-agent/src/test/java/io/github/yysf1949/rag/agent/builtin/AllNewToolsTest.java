@@ -253,7 +253,7 @@ class AllNewToolsTest {
                     "create_complaint", "token-abc");
 
             // when
-            var resp = tool.createComplaint(req, key);
+            var resp = tool.createComplaint(key, req);
 
             // then
             assertThat(resp.complaintId()).startsWith("CMP-");
@@ -272,7 +272,7 @@ class AllNewToolsTest {
                     "create_complaint", "token-p0");
 
             // when
-            var resp = tool.createComplaint(req, key);
+            var resp = tool.createComplaint(key, req);
 
             // then
             assertThat(resp.complaintId()).isNull();
@@ -291,9 +291,9 @@ class AllNewToolsTest {
                     "create_complaint", "token-idem");
 
             // when — first call
-            var resp1 = tool.createComplaint(req, key);
+            var resp1 = tool.createComplaint(key, req);
             // when — second call with identical key
-            var resp2 = tool.createComplaint(req, key);
+            var resp2 = tool.createComplaint(key, req);
 
             // then — second call is a replay returning the same complaint ID
             assertThat(resp2.complaintId()).isEqualTo(resp1.complaintId());
@@ -314,7 +314,7 @@ class AllNewToolsTest {
         @BeforeEach
         void setUp() {
             repo = new InMemoryOrderRepository();
-            tool = new OrderTool(repo);
+            tool = new OrderTool(repo, new InMemoryIdempotencyStore());
         }
 
         @Test

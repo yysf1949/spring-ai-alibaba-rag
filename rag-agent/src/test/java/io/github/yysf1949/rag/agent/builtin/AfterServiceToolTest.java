@@ -2,6 +2,8 @@ package io.github.yysf1949.rag.agent.builtin;
 
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryAfterServiceAuditRepository;
 import io.github.yysf1949.rag.agent.builtin.store.InMemoryNotificationRepository;
+import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
+import io.github.yysf1949.rag.agent.governance.InMemoryIdempotencyStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -12,19 +14,26 @@ class AfterServiceToolTest {
 
     private InMemoryAfterServiceAuditRepository auditRepo;
     private InMemoryNotificationRepository notificationRepo;
+    private InMemoryIdempotencyStore idemStore;
     private AfterServiceTool tool;
 
     @BeforeEach
     void setUp() {
         auditRepo = new InMemoryAfterServiceAuditRepository();
         notificationRepo = new InMemoryNotificationRepository();
-        tool = new AfterServiceTool(auditRepo, notificationRepo);
+        idemStore = new InMemoryIdempotencyStore();
+        tool = new AfterServiceTool(auditRepo, notificationRepo, idemStore);
+    }
+
+    private IdempotencyKey key(String token) {
+        return IdempotencyKey.of("tenant-1", "user-1", "s1", "execute_after_service", token);
     }
 
     @Test
     void refundConfirmedRecordsAuditAndSendsNotification() {
-        var resp = tool.execute(new AfterServiceTool.AfterServiceRequest(
-                "tenant-1", "user-1", "ORD-1", "REFUND_CONFIRMED", 200_00L, null));
+        var resp = tool.execute(key("as-1"),
+                new AfterServiceTool.AfterServiceRequest(
+                        "tenant-1", "user-1", "ORD-1", "REFUND_CONFIRMED", 200_00L, null));
 
         assertThat(resp.auditId()).startsWith("AUD-");
         assertThat(resp.actionType()).isEqualTo("REFUND_CONFIRMED");
@@ -46,8 +55,9 @@ class AfterServiceToolTest {
 
     @Test
     void cancelConfirmedRecordsAuditAndSendsNotification() {
-        var resp = tool.execute(new AfterServiceTool.AfterServiceRequest(
-                "tenant-1", "user-1", "ORD-2", "CANCEL_CONFIRMED", 0, null));
+        var resp = tool.execute(key("as-2"),
+                new AfterServiceTool.AfterServiceRequest(
+                        "tenant-1", "user-1", "ORD-2", "CANCEL_CONFIRMED", 0, null));
 
         assertThat(resp.actionType()).isEqualTo("CANCEL_CONFIRMED");
         assertThat(resp.success()).isTrue();
@@ -61,8 +71,9 @@ class AfterServiceToolTest {
 
     @Test
     void complaintEscalatedRecordsAuditAndSendsNotification() {
-        var resp = tool.execute(new AfterServiceTool.AfterServiceRequest(
-                "tenant-1", "user-1", "ORD-3", "COMPLAINT_ESCALATED", 0, "物流延迟三天"));
+        var resp = tool.execute(key("as-3"),
+                new AfterServiceTool.AfterServiceRequest(
+                        "tenant-1", "user-1", "ORD-3", "COMPLAINT_ESCALATED", 0, "物流延迟三天"));
 
         assertThat(resp.actionType()).isEqualTo("COMPLAINT_ESCALATED");
         assertThat(resp.success()).isTrue();
@@ -79,8 +90,9 @@ class AfterServiceToolTest {
     @Test
     void unknownActionTypeThrows() {
         assertThatThrownBy(() ->
-                tool.execute(new AfterServiceTool.AfterServiceRequest(
-                        "tenant-1", "user-1", "ORD-4", "UNKNOWN_ACTION", 0, null)))
+                tool.execute(key("as-4"),
+                        new AfterServiceTool.AfterServiceRequest(
+                                "tenant-1", "user-1", "ORD-4", "UNKNOWN_ACTION", 0, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Unknown actionType");
     }
@@ -88,8 +100,9 @@ class AfterServiceToolTest {
     @Test
     void emptyContextDoesNotCrash() {
         // 验证 null escalationReason 不会 NPE
-        var resp = tool.execute(new AfterServiceTool.AfterServiceRequest(
-                "tenant-1", "user-1", "ORD-5", "COMPLAINT_ESCALATED", 0, null));
+        var resp = tool.execute(key("as-5"),
+                new AfterServiceTool.AfterServiceRequest(
+                        "tenant-1", "user-1", "ORD-5", "COMPLAINT_ESCALATED", 0, null));
         assertThat(resp.success()).isTrue();
     }
 }

@@ -32,6 +32,16 @@ public interface SatisfactionSurveyPort {
     List<SurveyRecord> findByConversation(String conversationId);
 
     /**
+     * 统计所有调查记录总数（用于 resolution_rate 分母）。
+     */
+    long countAll();
+
+    /**
+     * 统计已解决问题的调查记录数（用于 resolution_rate 分子）。
+     */
+    long countResolved();
+
+    /**
      * 满意度调查持久化记录。
      *
      * @param surveyId       调查 ID（主键）

@@ -136,7 +136,7 @@ class Phase10EndToEndTest {
 
     @Test
     void l3CancelOrderUnderLimit() {
-        var req = AgentRequest.of(identity("t1", "user-1", Set.of("user")), "cancel_order",
+        var req = AgentRequest.of(withConfirmationToken(identity("t1", "user-1", Set.of("user")), "cancel_order"), "cancel_order",
                 new OrderTool.CancelOrderRequest("t1", "user-1", "ORD-1", 50_00L, "ok"),
                 IdempotencyKey.of("t1", "user-1", "s1", "cancel_order", "cancel-1"));
         AgentResponse resp = loop.execute(req);
@@ -145,7 +145,7 @@ class Phase10EndToEndTest {
 
     @Test
     void l3CancelOrderOverLimitTriggersHandoff() {
-        var req = AgentRequest.of(identity("t1", "user-1", Set.of("user")), "cancel_order",
+        var req = AgentRequest.of(withConfirmationToken(identity("t1", "user-1", Set.of("user")), "cancel_order"), "cancel_order",
                 new OrderTool.CancelOrderRequest("t1", "user-1", "ORD-1", 500_00L, "高额"),
                 IdempotencyKey.of("t1", "user-1", "s1", "cancel_order", "cancel-big-1"));
         AgentResponse resp = loop.execute(req);
