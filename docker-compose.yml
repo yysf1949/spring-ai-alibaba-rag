@@ -1,131 +1,20 @@
-# docker-compose for local development of spring-ai-alibaba-rag.
-#
-# Usage:
-#   # Bring up ONLY the app (uses an EXISTING redis — usually the manually-
-#   # started `rag-redis-stack` container you already have on port 6379):
-#   docker compose up -d app
-#
-#   # Bring up BOTH redis and app (full local stack, fresh):
-#   docker compose --profile full up -d --build
-#
-#   # Verify
-#   docker compose ps                                # confirm "running"
-#   docker compose exec redis redis-cli MODULE LIST # must include "search"
-#   curl -s http://localhost:18081/actuator/health   # → 200 {"status":"UP"}
-#
-# Why profiles? Most developers already run `rag-redis-stack` directly via
-# `docker run` and don't want compose-managed redis to clash on port 6379.
-# The `app` service is profile-less (always starts when targeted explicitly)
-# and reaches redis via host.docker.internal in that mode.
-#
-# SiliconFlow: by default the app starts with rag.siliconflow.enabled=false
-# (stubs only — useful for smoke-testing the API surface). To wire the real
-# SiliconFlow embedding/rerank/LLM, either:
-#   1. export SILICONFLOW_API_KEY=*** before `docker compose up -d --build`, or
-#   2. drop a .env next to this file with SILICONFLOW_API_KEY=*** and uncomment
-#      the `env_file:` block in the `app` service below.
-#
-# See docs/RUNBOOK.md §3 for the full local-dev workflow.
-
+version: '3.8'
 services:
-
-  redis:
-    # Redis Stack 7.4 ships with RediSearch (HNSW vector index),
-    # RedisJSON, and RedisBloom. We only need RediSearch for the
-    # vector store + 3-tier cache (spec §5, §13.6-§13.8).
-    image: redis/redis-stack-server:7.4.0-v3
-    container_name: rag-redis
-    restart: unless-stopped
-    # Only bring up when the user opts in via `--profile full`. Avoids the
-    # port-6379 clash with a manually-started `rag-redis-stack` container.
-    profiles: ["full"]
+  agent:
+    build: .
     ports:
-      - "6379:6379"
-    # 256 MB cap is enough for ~1M vectors at 1536-dim with HNSW M=16.
-    # Bump to 1g+ for production.
-    command: >
-      redis-server
-        --maxmemory 256mb
-        --maxmemory-policy allkeys-lru
-        --loadmodule /opt/redis-stack/lib/redistack.so
-    healthcheck:
-      test: ["CMD", "redis-cli", "PING"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    volumes:
-      # Persist Redis data across `docker compose down`. Use `down -v` to wipe.
-      - redis_data:/data
-    networks:
-      - rag-net
-
-  app:
-    # Built from ./Dockerfile — multi-stage Temurin 21 JDK → JRE-jammy.
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: rag-app:local
-    container_name: rag-app
-    restart: unless-stopped
-    # We intentionally don't depend_on:redis here because the legacy
-    # `rag-redis-stack` container is started manually (not via compose)
-    # and using `depends_on.condition: service_healthy` against a
-    # profile-gated service breaks podman-compose's dep walker. The
-    # healthcheck below catches startup-time Redis failures and the
-    # app's own Spring retry covers transient drops.
+      - "8080:8080"
     environment:
-      # The Spring Boot app reads spring.rag.redis.* (custom properties
-      # record) and spring.data.redis.* (Spring Data default) — neither is
-      # populated from REDIS_HOST in application.yml, so we use
-      # SPRING_APPLICATION_JSON to inject both at once.
-      #
-      # In compose-network mode (--profile full), `redis` resolves to the
-      # rag-redis container via the user-defined network below. When running
-      # `app` alone, set REDIS_HOST=host.docker.internal in your shell to
-      # reach the host's manually-started `rag-redis-stack` container.
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: "6379"
-      SERVER_PORT: "8080"
-      SPRING_PROFILES_ACTIVE: docker
-      # SPRING_APPLICATION_JSON pre-resolves values into the Environment as a
-      # first-class PropertySource, bypassing the YAML-placeholder-unresolved
-      # issue (see LESSONS.md §3.0).
-      SPRING_APPLICATION_JSON: >-
-        {"spring":{"rag":{"redis":{"host":"${REDIS_HOST:-redis}","port":6379,"enabled":true,"maxTotal":16,"commandTimeoutMs":5000}}}}
-      # SiliconFlow — pulled from shell env if set, otherwise stubs only.
-      # Compose interpolation syntax "${VAR:-default}" leaves the variable
-      # unset in the container when it's unset on the host (no leakage of
-      # an empty key into Spring's @Conditional check).
-      RAG_SILICONFLOW_ENABLED: "${RAG_SILICONFLOW_ENABLED:-false}"
-      SILICONFLOW_API_KEY: "${SILICONFLOW_API_KEY:-}"
-      SILICONFLOW_BASE_URL: "${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}"
-    # Optional: load full env from a local .env file next to this compose.
-    # Safer than putting real keys in the YAML directly. Uncomment to use:
-    # env_file:
-    #   - path: ./rag-embedding/.env
-    #     required: false
-    ports:
-      - "18081:8080"
-    # host.docker.internal is supported on Docker Desktop (Win/Mac) and on
-    # Linux docker engine >= 20.10. Add `extra_hosts` as a fallback for
-    # older engines so `host.docker.internal` always resolves.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - SPRING_PROFILES_ACTIVE=h2
+      - SPRING_AI_OPENAI_API_KEY=${SPRING_AI_OPENAI_API_KEY}
+      - SPRING_AI_OPENAI_BASE_URL=${SPRING_AI_OPENAI_BASE_URL}
+    volumes:
+      - agent-data:/app/data
     healthcheck:
-      # Spring Boot Actuator exposes /actuator/health/liveness and
-      # /actuator/health/readiness (configured via management.endpoint.health.probes).
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/liveness | grep -q UP || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 30s
-    networks:
-      - rag-net
-
-networks:
-  rag-net:
-    name: rag-net
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
-  redis_data:
-    name: rag_redis_data
+  agent-data:
