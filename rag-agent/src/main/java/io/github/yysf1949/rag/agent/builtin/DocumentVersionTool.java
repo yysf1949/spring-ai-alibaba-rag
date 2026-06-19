@@ -39,10 +39,8 @@ public class DocumentVersionTool {
 
     @ToolSpec(
             name = "doc_version",
-            description = "管理单个文档的版本: list 列出版本列表; get_active 查当前生效版本; "
-                    + "publish 发布指定版本为 active; rollback 回滚到历史版本 (语义同 publish). "
-                    + "调用传 action + tenantId + kbId + docId + 可选 versionId (list/get_active 可省). "
-                    + "注意: 这是文档级, 不影响 KB 内其他文档.",
+            description = "管理文档版本。action:list/get_active/publish/rollback。返回action/versions/status/activeVersion。"
+                    + "用户问'这个文档有哪些版本'、'帮我回滚到上个版本'。文档级操作不影响其他文档。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
             idempotent = true)
     public DocumentVersionResponse manage(DocumentVersionRequest request) {

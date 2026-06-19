@@ -30,8 +30,7 @@ public class CouponTool {
 
     @ToolSpec(
             name = "issue_coupon",
-            description = "补发优惠券，单张≤200元可自动执行，>200元需转人工审批。"
-                    + "适用场景：售后补偿、活动奖励、客户挽留。调用方必须传 idempotencyKey 防重复发放。",
+            description = "补发优惠券，返回couponId/amountCents/status。≤200元自动执行，>200元转人工。用户说'能不能补偿我一张券'、'退款太慢了给点补偿'。幂等防重复。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = true,
             requiresIdempotencyKey = true,

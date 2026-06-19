@@ -38,8 +38,7 @@ public class ComplaintTool {
 
     @ToolSpec(
             name = "create_complaint",
-            description = "创建投诉工单。记录投诉类型(商品质量/物流问题/服务态度/退款纠纷)、描述、优先级(P0紧急~P3低)。"
-                    + "高优先级(P0)投诉自动升级转人工客服。适用于：用户明确表达不满、要求投诉、需升级处理。",
+            description = "创建投诉工单，返回complaintId/status/priority/message。支持SERVICE/QUALITY/LOGISTICS/OTHER分类，P0紧急自动转人工。用户说'我要投诉'、'对你们服务很不满意'。幂等。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = true,
             requiresIdempotencyKey = true,

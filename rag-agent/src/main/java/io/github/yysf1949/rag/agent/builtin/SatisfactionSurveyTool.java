@@ -28,7 +28,7 @@ public class SatisfactionSurveyTool {
 
     @ToolSpec(
             name = "submit_satisfaction_survey",
-            description = "提交用户满意度调查（评分 1-5 + 文字反馈 + 是否已解决）。",
+            description = "提交满意度调查，返回surveyId/rating/resolved/message。评分1-5+反馈+是否已解决。用户说'问题解决了给5分'、'请给本次服务打个分'。幂等。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
             idempotent = true,
             requiresIdempotencyKey = true
@@ -70,7 +70,7 @@ public class SatisfactionSurveyTool {
 
     @ToolSpec(
             name = "list_surveys_by_conversation",
-            description = "查询会话关联的满意度调查记录（只读）。",
+            description = "查询会话关联的满意度调查记录，返回surveyId/rating/feedback/resolved。适用于：用户问'这个会话的满意度评分是多少'、'之前评价过吗'。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false

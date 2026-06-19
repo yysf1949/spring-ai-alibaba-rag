@@ -48,9 +48,8 @@ public class KbVersionTool {
 
     @ToolSpec(
             name = "kb_version",
-            description = "管理知识库版本: list 列出版本列表; get_active 查当前生效版本; "
-                    + "switch 切换到指定版本; rollback 回滚到历史版本 (语义同 switch). "
-                    + "调用传 action + tenantId + kbId + 可选 versionId (list/get_active 可省).",
+            description = "管理知识库版本。action:list/get_active/switch/rollback。返回action/versions/status/activeVersion。"
+                    + "用户问'知识库现在是什么版本'、'切回上一个版本'。KB级操作影响所有检索。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
             idempotent = true)
     public KbVersionResponse manage(KbVersionRequest request) {

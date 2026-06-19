@@ -51,7 +51,7 @@ public class NotificationTool {
 
     @ToolSpec(
             name = "send_notification",
-            description = "发送站内通知（5 个模板白名单 + 500 字符上限 + 5 分钟去重）。",
+            description = "发送站内通知。5种模板:REFUND_CREATED(退款)/COUPON_ISSUED(优惠券)/ORDER_CANCELLED(取消)/TICKET_CREATED(工单)/HUMAN_HANDOFF(转人工)。返回notificationId/status/sentAt。用户说'退款成功了通知我'。500字上限+5分钟去重。",
             riskLevel = RiskLevel.L2_REVERSIBLE,
             idempotent = true,
             requiresIdempotencyKey = true

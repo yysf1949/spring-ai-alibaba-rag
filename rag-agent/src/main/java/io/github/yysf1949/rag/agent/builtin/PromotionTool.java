@@ -42,7 +42,7 @@ public class PromotionTool {
 
     @ToolSpec(
             name = "query_product_promotions",
-            description = "查询某商品当前参与的所有促销活动（只读）。",
+            description = "查询商品参与的促销，返回promotions(id/name/discountType/discountValue/起止时间)。适用于：用户问'这个商品有活动吗'、'现在买划算吗'。只读。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false
@@ -59,7 +59,7 @@ public class PromotionTool {
 
     @ToolSpec(
             name = "query_all_active_promotions",
-            description = "查询当前所有进行中的促销活动列表（只读）。",
+            description = "查询全部进行中促销，返回promotions列表(id/name/discountType/discountValue/起止时间)。适用于：用户问'现在有什么活动'、'有没有优惠'。只读。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false

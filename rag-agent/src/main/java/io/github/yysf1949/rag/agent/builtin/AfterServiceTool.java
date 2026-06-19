@@ -33,7 +33,7 @@ public class AfterServiceTool {
 
     @ToolSpec(
             name = "execute_after_service",
-            description = "执行售后善后操作（退款确认/取消确认/投诉升级），记录审计链路并发送用户通知。",
+            description = "执行售后善后，返回auditId/actionType/steps/success。支持REFUND_CONFIRMED/CANCEL_CONFIRMED/COMPLAINT_ESCALATED，记录审计+发通知。适用于退款/取消确认后善后。幂等。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = true,
             requiresIdempotencyKey = true,

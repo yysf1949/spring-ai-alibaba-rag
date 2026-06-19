@@ -33,7 +33,7 @@ public class PriceProtectionTool {
 
     @ToolSpec(
             name = "query_price_protection_policy",
-            description = "查询某商品品类的价保政策（天数、赔付比例）。只读工具。",
+            description = "查询某品类价保政策，返回protectionDays/maxRefundRatio。适用于：用户问'这个商品有价保吗'、'价保几天'。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false
@@ -45,7 +45,7 @@ public class PriceProtectionTool {
 
     @ToolSpec(
             name = "check_price_protection_eligibility",
-            description = "查询某订单是否符合价保条件（在价保期内）。只读工具。",
+            description = "检查订单价保资格，返回orderId/eligible/message。适用于：用户问'还能申请价保吗'、'买完就降价了能退差价吗'。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false
@@ -61,7 +61,7 @@ public class PriceProtectionTool {
 
     @ToolSpec(
             name = "apply_price_protection",
-            description = "申请价保退差价（单笔差价 ≤ 200 元自动处理，超过需转人工审批）。",
+            description = "申请价保退差价，返回claimId/status/refundAmountCents。≤200元自动处理，超过转人工。用户说'刚买就降价了申请退差价'。幂等。",
             riskLevel = RiskLevel.L3_BUSINESS_STATE,
             idempotent = true,
             requiresIdempotencyKey = true,

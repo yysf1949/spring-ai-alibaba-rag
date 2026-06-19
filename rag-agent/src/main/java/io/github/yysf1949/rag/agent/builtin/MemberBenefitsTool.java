@@ -38,7 +38,7 @@ public class MemberBenefitsTool {
 
     @ToolSpec(
             name = "get_member_benefits",
-            description = "查询用户会员等级 + 积分余额 + 可用特权 + 等级折扣。",
+            description = "查询会员权益，返回userId/tier/pointsBalance/perks/couponDiscountCents。适用于：用户问'我是什么会员等级'、'有什么会员特权'。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false
