@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * 默认单次循环 — 找到 tool → 过风险门 → 反射调用 → 审计 + metrics 埋点 + handoff 分流。
@@ -81,6 +82,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
     private DebugMode debugMode = DebugMode.OFF;
     private final List<AgentLoopDebugEvent> debugTrace = new ArrayList<>();
     private final AtomicInteger debugStepCounter = new AtomicInteger(0);
+    private final AgentLoopTracer tracer;
 
     /**
      * 完整构造 — 含租户级限流。
@@ -90,6 +92,19 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
                             AgentMetrics metrics, HandoffService handoffService,
                             TenantRateLimiter tenantRateLimiter,
                             ObjectMapper objectMapper) {
+        this(registry, riskGate, idemStore, auditBridge, metrics, handoffService,
+                tenantRateLimiter, objectMapper, false);
+    }
+
+    /**
+     * 完整构造 — 含租户级限流 + 追踪器开关。
+     */
+    public DefaultAgentLoop(ToolRegistry registry, RiskGate riskGate,
+                            IdempotencyStore idemStore, ToolAuditBridge auditBridge,
+                            AgentMetrics metrics, HandoffService handoffService,
+                            TenantRateLimiter tenantRateLimiter,
+                            ObjectMapper objectMapper,
+                            boolean tracerEnabled) {
         this.registry = registry;
         this.riskGate = riskGate;
         this.idemStore = idemStore;
@@ -99,6 +114,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
         this.tenantRateLimiter = tenantRateLimiter == null
                 ? new TenantRateLimiter() : tenantRateLimiter;
         this.objectMapper = objectMapper;
+        this.tracer = new AgentLoopTracer(tracerEnabled);
     }
 
     /**
@@ -109,7 +125,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
                             AgentMetrics metrics, HandoffService handoffService,
                             ObjectMapper objectMapper) {
         this(registry, riskGate, idemStore, auditBridge, metrics, handoffService,
-                null, objectMapper);
+                null, objectMapper, false);
     }
 
     // ── 调试模式 API ─────────────────────────────────────────
@@ -176,6 +192,13 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
 
     // ── 执行入口 ─────────────────────────────────────────────
 
+    /**
+     * 返回追踪器实例（测试用）。
+     */
+    public AgentLoopTracer getTracer() {
+        return tracer;
+    }
+
     @Override
     public AgentResponse execute(AgentRequest request) {
         long start = System.currentTimeMillis();
@@ -207,6 +230,9 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
             // 1. 查工具
             // ── SELECT_TOOLS: 从注册表中查找工具 ──
             ToolDescriptor desc = registry.get(request.toolName());
+            // ── 追踪: 工具选择 ──
+            List<String> candidateNames = registry.listNames();
+            tracer.logToolSelection(candidateNames, List.of(desc.name()));
             recordDebugEvent(
                     AgentLoopDebugEvent.Phase.SELECT_TOOLS,
                     desc.name(), desc.riskLevel(), requestJson, null,
@@ -217,12 +243,15 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
             try {
                 riskGate.check(desc, request.identity(), request.idempotencyKey(), amountCents);
                 // ── VERIFY: 风险门控通过 ──
+                tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "ALLOW", null);
                 recordDebugEvent(
                         AgentLoopDebugEvent.Phase.VERIFY,
                         desc.name(), desc.riskLevel(), requestJson, null,
                         "ALLOW", null);
             } catch (AmountLimitExceededException e) {
                 // AmountLimitExceeded → 走 handoff 流程
+                tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "HANDOFF",
+                        "Amount limit exceeded: requested=" + e.requestedCents() + " limit=" + e.limitCents());
                 recordDebugEvent(
                         AgentLoopDebugEvent.Phase.VERIFY,
                         desc.name(), desc.riskLevel(), requestJson, null,
@@ -243,6 +272,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
                         "已转人工处理: " + hctx.summary(), latency, handoffPayload);
             } catch (ToolRiskDeniedException e) {
                 // ── VERIFY: 风险门控拒绝 ──
+                tracer.logRiskGate(desc.name(), desc.riskLevel().name(), "DENY", e.getMessage());
                 recordDebugEvent(
                         AgentLoopDebugEvent.Phase.VERIFY,
                         desc.name(), desc.riskLevel(), requestJson, null,
@@ -276,12 +306,17 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
             if (request.idempotencyKey() != null) {
                 var putResult = idemStore.putIfAbsent(request.idempotencyKey(), null);
                 if (putResult.isReplay()) {
+                    // ── 追踪: 幂等回放 ──
+                    tracer.logIdempotency(request.idempotencyKey().toString(), true);
                     outcome = AgentOutcome.REPLAY;
                     metrics.recordIdempotencyReplay(request.toolName());
                     long latency = System.currentTimeMillis() - start;
                     metrics.recordToolInvocation(request.toolName(), outcome, latency);
                     return new AgentResponse(request.toolName(), outcome, putResult.value(),
                             "(replay) " + safeToJson(putResult.value()), latency, null);
+                } else {
+                    // ── 追踪: 幂等首次执行 ──
+                    tracer.logIdempotency(request.idempotencyKey().toString(), false);
                 }
             }
 
@@ -289,7 +324,15 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
             // ── EXECUTE: 调用工具 ──
             try {
                 result = invokeWithInjection(desc, request);
+                // ── 追踪: 工具执行成功 ──
+                long execDuration = System.currentTimeMillis() - start;
+                tracer.logExecution(desc.name(), safeToJson(request.requestPayload()),
+                        safeToJson(result), execDuration, "SUCCESS");
             } catch (HandoffRequiredException e) {
+                // ── 追踪: 工具执行触发 handoff ──
+                long execDuration = System.currentTimeMillis() - start;
+                tracer.logExecution(desc.name(), safeToJson(request.requestPayload()),
+                        null, execDuration, "HANDOFF");
                 recordDebugEvent(
                         AgentLoopDebugEvent.Phase.EXECUTE,
                         desc.name(), desc.riskLevel(), requestJson,

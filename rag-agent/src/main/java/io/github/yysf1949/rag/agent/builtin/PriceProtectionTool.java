@@ -33,7 +33,7 @@ public class PriceProtectionTool {
 
     @ToolSpec(
             name = "query_price_protection_policy",
-            description = "查询某品类价保政策，返回protectionDays/maxRefundRatio。适用于：用户问'这个商品有价保吗'、'价保几天'。只读工具。",
+            description = "查询某商品品类的价保政策：保护天数(如7天)、最高赔付比例(如1.0=全额)。返回category/protectionDays/maxRefundRatio。适用于：用户问'这个商品有价保吗'、'价保多少天'。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false

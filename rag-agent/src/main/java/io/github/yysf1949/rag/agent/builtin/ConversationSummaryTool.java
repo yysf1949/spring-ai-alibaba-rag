@@ -18,7 +18,7 @@ public class ConversationSummaryTool {
 
     @ToolSpec(
             name = "generate_conversation_summary",
-            description = "根据消息列表生成会话摘要，返回summary/keyIssues/messageCount。适用于：会话结束时归档、用户问'帮我总结一下刚才的对话'。只读工具。",
+            description = "根据消息列表生成会话摘要，提取关键问题（退款/投诉/物流等关键词）。返回摘要文本、关键问题列表、消息总数。适用于：会话结束时生成总结归档、转人工前生成上下文摘要。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false

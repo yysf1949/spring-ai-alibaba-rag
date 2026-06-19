@@ -70,7 +70,7 @@ public class SatisfactionSurveyTool {
 
     @ToolSpec(
             name = "list_surveys_by_conversation",
-            description = "查询会话关联的满意度调查记录，返回surveyId/rating/feedback/resolved。适用于：用户问'这个会话的满意度评分是多少'、'之前评价过吗'。只读工具。",
+            description = "查询指定会话关联的所有满意度调查记录。返回评分(1-5)、反馈内容、是否已解决、提交时间。适用于：查看历史满意度数据、配合质量审核。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false

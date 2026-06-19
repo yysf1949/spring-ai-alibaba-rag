@@ -42,7 +42,7 @@ public class RefundRuleTool {
 
     @ToolSpec(
             name = "check_refund_rules",
-            description = "检查订单退款规则，返回withinWindow/hasComboCoupon/requiresManual/reason/matchedRules。适用于：用户问'这个订单能退款吗'、'退款有限制吗'。只读工具。",
+            description = "检查订单是否满足退款规则：(1)是否在7天退款期内 (2)是否使用组合优惠 (3)支付渠道是否允许退款。返回各规则匹配结果和是否需转人工。适用于：退款前判断是否可自动处理。只读工具。",
             riskLevel = RiskLevel.L1_READ,
             idempotent = true,
             requiresIdempotencyKey = false
