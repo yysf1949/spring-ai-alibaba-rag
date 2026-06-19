@@ -1,0 +1,29 @@
+stages:
+  - build
+  - test
+  - report
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  JAVA_VERSION: "17"
+
+build:
+  stage: build
+  script:
+    - mvn compile -q
+  artifacts:
+    paths:
+      - rag-agent/target/
+    expire_in: 1 hour
+
+unit-test:
+  stage: test
+  script:
+    - mvn test -pl rag-agent
+  artifacts:
+    when: always
+    paths:
+      - rag-agent/target/surefire-reports/
+    expire_in: 7 days
+
+# 后续可加: integration-test, e2e-test, coverage 等 stage
