@@ -14,6 +14,8 @@ import io.github.yysf1949.rag.agent.exception.HandoffRequiredException;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
 import io.github.yysf1949.rag.agent.governance.AgentIdentity;
 import io.github.yysf1949.rag.agent.governance.AgentMetrics;
+import io.github.yysf1949.rag.agent.governance.FailureClassification;
+import io.github.yysf1949.rag.agent.governance.FailureClassificationRouter;
 import io.github.yysf1949.rag.agent.governance.IdempotencyKey;
 import io.github.yysf1949.rag.agent.governance.IdempotencyStore;
 import io.github.yysf1949.rag.agent.governance.RiskGate;
@@ -78,6 +80,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
     private final HandoffService handoffService;
     private final TenantRateLimiter tenantRateLimiter;
     private final ObjectMapper objectMapper;
+    private final FailureClassificationRouter failureRouter;
 
     // ── 调试/追踪模式 ────────────────────────────────────────
 
@@ -94,9 +97,10 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
                             IdempotencyStore idemStore, ToolAuditBridge auditBridge,
                             AgentMetrics metrics, HandoffService handoffService,
                             TenantRateLimiter tenantRateLimiter,
-                            ObjectMapper objectMapper) {
+                            ObjectMapper objectMapper,
+                            FailureClassificationRouter failureRouter) {
         this(registry, riskGate, idemStore, auditBridge, metrics, handoffService,
-                tenantRateLimiter, objectMapper, false);
+                tenantRateLimiter, objectMapper, failureRouter, false);
     }
 
     /**
@@ -107,6 +111,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
                             AgentMetrics metrics, HandoffService handoffService,
                             TenantRateLimiter tenantRateLimiter,
                             ObjectMapper objectMapper,
+                            FailureClassificationRouter failureRouter,
                             boolean tracerEnabled) {
         this.registry = registry;
         this.riskGate = riskGate;
@@ -117,6 +122,7 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
         this.tenantRateLimiter = tenantRateLimiter == null
                 ? new TenantRateLimiter() : tenantRateLimiter;
         this.objectMapper = objectMapper;
+        this.failureRouter = failureRouter;
         this.tracer = new AgentLoopTracer(tracerEnabled);
     }
 
@@ -126,9 +132,29 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
     public DefaultAgentLoop(ToolRegistry registry, RiskGate riskGate,
                             IdempotencyStore idemStore, ToolAuditBridge auditBridge,
                             AgentMetrics metrics, HandoffService handoffService,
+                            TenantRateLimiter tenantRateLimiter,
                             ObjectMapper objectMapper) {
         this(registry, riskGate, idemStore, auditBridge, metrics, handoffService,
-                null, objectMapper, false);
+                tenantRateLimiter, objectMapper, null, false);
+    }
+
+    /** Test seam — no TenantRateLimiter, no FailureClassificationRouter. */
+    public DefaultAgentLoop(ToolRegistry registry, RiskGate riskGate,
+                            IdempotencyStore idemStore, ToolAuditBridge auditBridge,
+                            AgentMetrics metrics, HandoffService handoffService,
+                            ObjectMapper objectMapper) {
+        this(registry, riskGate, idemStore, auditBridge, metrics, handoffService,
+                null, objectMapper, null, false);
+    }
+
+    /** New 8-arg ctor with FailureClassificationRouter, no tenant rate limiter. */
+    public DefaultAgentLoop(ToolRegistry registry, RiskGate riskGate,
+                            IdempotencyStore idemStore, ToolAuditBridge auditBridge,
+                            AgentMetrics metrics, HandoffService handoffService,
+                            ObjectMapper objectMapper,
+                            FailureClassificationRouter failureRouter) {
+        this(registry, riskGate, idemStore, auditBridge, metrics, handoffService,
+                null, objectMapper, failureRouter, false);
     }
 
     // ── 调试模式 API ─────────────────────────────────────────
@@ -282,6 +308,18 @@ public class DefaultAgentLoop implements AgentLoop, AgentService {
             metrics.recordErrorExecution(request.toolName(), errorType);
             metrics.recordToolInvocation(request.toolName(), AgentOutcome.FAILURE, latency);
             log.error("Tool [{}] execution failed: {}", request.toolName(), e.getMessage(), e);
+            // Phase 32 R15: classify the failure and route to the matching
+            // FallbackStrategy. Best-effort — a router exception must not
+            // mask the original tool error.
+            if (failureRouter != null) {
+                try {
+                    FailureClassification.Category category = FailureClassification.classify(e);
+                    failureRouter.route(category, e.getMessage());
+                } catch (Exception routerEx) {
+                    log.warn("FailureClassificationRouter raised {}; tool error still returned",
+                            routerEx.getClass().getSimpleName(), routerEx);
+                }
+            }
             return new AgentResponse(request.toolName(), AgentOutcome.FAILURE, null,
                     "Tool execution failed: " + e.getMessage(), latency, null);
         }
