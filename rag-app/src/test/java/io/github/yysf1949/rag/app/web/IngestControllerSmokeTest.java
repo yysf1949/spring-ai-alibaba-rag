@@ -41,6 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
         "spring.main.web-application-type=servlet",
+        "spring.rag.redis.enabled=false",
         "spring.data.redis.host=nonexistent",
         "spring.data.redis.port=0",
         "spring.ai.openai.api-key=test-key"

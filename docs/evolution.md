@@ -1257,8 +1257,61 @@ Total new tests: 23
 | **知识库** | kb_search | L1 | RAG 检索 |
 | | kb_version / doc_version | L2 | 版本管理 |
 
-### P19 → Phase 20 → Phase 21 增量
+---
 
-- P20: partial re-index + live Redis tests + controller E2E (基础设施层)
-- P21: 业务工具扩充 (文章驱动) — 从 15 个工具 → 20 个工具; 新增确认令牌机制; 全部工具对齐文章 4 级风险分级
-- 关键设计决策: ConfirmationToken 通过 AgentIdentity 透传, RiskGate 统一校验, 不侵入工具实现
+## Phase 32 — 指标 + 可观测性闭环 (2026-06-22)
+
+**目标**: FailureClassification → fallback 路由 + Testcontainers IT + 7 条 AlertManager 规则
+
+### T1: FailureClassificationRouter + FallbackStrategy (commit 3682e24)
+
+| 模块 | 文件 | 职责 |
+|---|---|---|
+| **FailureClassification** | `governance/FailureClassification.java` | 5 类异常分类: LIMITS/HALLUCINATION/TIMEOUT/TOOL_ERROR/POLICY_DENY |
+| **FailureClassificationRouter** | `governance/FailureClassificationRouter.java` | 5 路由 (switch), classify(Throwable) → category |
+| **FallbackStrategy** | `governance/FallbackStrategy.java` | 5 方法接口, 每类 fallback 动作 |
+| **FallbackHandler** | `governance/FallbackHandler.java` | 默认实现, 发射 `rag.fallback.triggered` 指标 |
+| **DefaultAgentLoop** | `orchestration/DefaultAgentLoop.java` | catch(Exception) → router.onFailure |
+| **T1 测试** | `FailureClassificationRouterTest.java` | 6 unit tests (routing + null safety), 0 fail |
+
+### T2: RagEndToEndIT Testcontainers 升级 (commit a5c5e58)
+
+**升级内容**:
+- 替换手动 `RAG_REDIS_HOST`/`RAG_REDIS_PORT` 环境变量解析为 `@Testcontainers` + `@Container GenericContainer<redis/redis-stack-server>`
+- `@DynamicPropertySource` 注入容器 host/port + `spring.rag.redis.enabled=true`
+- 新增 `containerRedisIsReachable()` 测试验证容器启动正确
+- 保留 `@EnabledIfSystemProperty(runIT=true)` 门控
+
+**关联修复**: 3 个 Spring Boot 测试类新增 `spring.rag.redis.enabled=false` 使无 Redis 时也能独立运行:
+- `RagControllerSmokeTest`
+- `IngestControllerSmokeTest`
+- `IngestControllerMetricsAndAuditTest`
+
+### T3: AlertManager 告警规则 (commit 969813f)
+
+7 条 Prometheus AlertManager 规则 + YAML 验证脚本:
+
+| 规则名 | 触发条件 | 严重度 |
+|---|---|---|
+| `RagQaHighP95Latency` | P95 > 3s 持续 5min | warning |
+| `RagCircuitBreakerOpen` | CircuitBreaker OPEN ≥1min | critical |
+| `RagAnswerCacheHitRatioLow` | 命中率 < 20% 持续 10min | warning |
+| `RagEmptyRetrievalHigh` | 空检索率 > 50% 持续 5min | warning |
+| `RagEvalRegressionCritical` | eval 通过率 < 80% | critical |
+| `RagRedisMemoryHigh` | Redis 内存 > 80% | warning |
+| `RagLlmHighErrorRate` | LLM 错误率 > 10% | critical |
+
+验证脚本: `monitoring/alerts-validation-test.sh` — 检查 7 条规则均存在且 YAML 语法正确。
+
+### 全仓库测试增量
+
+| 模块 | Phase 31 末 | Phase 32 末 | 增量 | 说明 |
+|---|---|---|---|---|
+| rag-core | 18 | 18 | - | - |
+| rag-redis | 69 (23 skip) | 69 (23 skip) | - | - |
+| rag-agent | 532 | **538** | **+6** | FailureClassificationRouterTest |
+| rag-embedding | 27 | 27 | - | - |
+| rag-pipeline | 200 | 200 | - | - |
+| rag-app | 8 (18 skip/error) | 26 (2 skip) | **+18** | smoke test Redis 修复 |
+| rag-test | 2 (2 skip) | 2 (2 skip) | - | - |
+| **总计** | **~856** | **~880** | **+24** | 0 fail, checkstyle:check 通过 |

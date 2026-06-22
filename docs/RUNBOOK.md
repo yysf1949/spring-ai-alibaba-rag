@@ -30,6 +30,12 @@ sdk install java 21.0.2-tem
 sdk install maven
 ```
 
+### Docker
+
+`RagEndToEndIT` uses **Testcontainers** to auto-provision a `redis/redis-stack-server`
+container for integration tests. The test is gated behind `-DrunIT=true`. Ensure
+Docker is running before enabling IT tests:
+
 ---
 
 ## 2. Build & unit test (no external services)
@@ -43,13 +49,14 @@ mvn verify
 Expected output:
 
 ```
-[INFO] Tests run: 124, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
-> The 23 `RedisIndexManagerSmokeTest` cases show as `Skipped` (not failed)
-> when Redis Stack is not running. **Skipped is not failure** — they're
-> integration tests that auto-activate when Redis is reachable.
+> Tests requiring Redis (`LiveTest` suffix) or Testcontainers (`RagEndToEndIT`)
+> are gated behind `@EnabledIfSystemProperty(named = "runIT", ...)` and
+> auto-skip when `-DrunIT=true` is absent. **Skipped is not failure.**
+> 23 `RedisIndexManagerSmokeTest` cases show as `Skipped` when no Redis
+> Stack is running locally.
 
 ### Run a single test class
 

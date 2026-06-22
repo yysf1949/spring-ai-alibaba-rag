@@ -139,6 +139,16 @@ class RagEndToEndIT {
                         + secondBody.latencyMs() + "ms vs first " + firstLatency + "ms");
     }
 
+    @Test
+    void containerRedisIsReachable() {
+        // Verify the Testcontainers-managed Redis Stack is running and
+        // the DynamicPropertySource injected the correct host/port.
+        assertNotNull(redis, "Redis container must be started by @Container");
+        assertTrue(redis.isRunning(), "Redis container must be running");
+        assertTrue(redis.getMappedPort(6379) > 0,
+                "Redis container must expose port 6379");
+    }
+
     @SuppressWarnings("unchecked")
     private ResponseEntity<String> postQa(String tenantId, String rawText) {
         HttpHeaders headers = new HttpHeaders();
