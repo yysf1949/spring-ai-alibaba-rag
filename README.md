@@ -270,10 +270,27 @@ scripts/cluster10-evolution-test.sh →  4/4 PASS (版本升级/固定/deprecati
 
 ---
 
-## rag-ui (Phase 36-T1)
+## rag-ui (Phase 36-T1 + T2a + T2b)
 
 > RAG admin UI — React 18 + Vite + Tailwind + shadcn/ui + OpenAPI TypeScript client.
-> Phase 36-T1 落地:**项目骨架 + OpenAPI TS client 自动化**。业务 UI 在 T2/T3。
+> Phase 36-T1 落地:**项目骨架 + OpenAPI TS client 自动化**。
+> Phase 36-T2a:`/ingest` 拖拽上传页 (react-dropzone + multipart)。
+> Phase 36-T2b:`/preview/{jobId}` 分块预览页 (chunk pipeline counters)。
+
+### 路由
+
+```
+/                 → HomePage (Phase 36 dashboard 占位)
+/ingest           → IngestPage (拖拽 PDF → /preview/{jobId})
+/preview/:jobId   → PreviewPage (chunk pipeline counters + status banner + publish 按钮)
+```
+
+`/preview/{jobId}` 调 `GET /api/ingest/{jobId}`,渲染 4 个 chunk 计数器 (totalChunks / embeddedChunks / upsertedChunks / failedChunks) + 状态徽章。READY 状态下显示 Publish 按钮调 `POST /api/ingest/{jobId}/publish`。
+
+### 已知 T2b 限制
+
+- **不展示 chunk 文本** — 后端 `GET /api/ingest/{jobId}` 当前只返 chunk **counters**,不返 chunk content/embedding 详情。展示 chunk 文本需新增 endpoint `GET /api/ingest/{jobId}/chunks`,超 T2b scope (任务 body 明确"不要碰 backend")。
+- **无高亮 (highlight)** — 任务 body 提的"react 自身 `<mark>` 高亮匹配关键词"在没 chunk 文本的前提下无法实现。留 TODO 给后续 phase。
 
 ### 目录结构
 
@@ -288,17 +305,19 @@ rag-ui/
 ├── tsconfig.node.json
 ├── vite.config.ts          # /api proxy → http://localhost:8080
 └── src/
-    ├── App.tsx             # 根组件 (BrowserRouter + HomePage)
+    ├── App.tsx             # 根组件 (BrowserRouter + HomePage + IngestPage + PreviewPage)
     ├── main.tsx            # React 18 createRoot
     ├── index.css           # Tailwind + shadcn/ui 主题变量
     ├── vite-env.d.ts       # import.meta.env 类型声明
     ├── api/
-    │   ├── client.ts       # 手写 runtime client (ingestApi.getJob/submit/publish + qaApi.submit)
+    │   ├── client.ts       # 手写 runtime client (ingestApi.getJob/submit/uploadMultipart/publish + qaApi.submit)
     │   └── schema.d.ts     # 手写 OpenAPI 类型 stub (首次 npm run openapi:gen 后替换)
     ├── components/ui/      # shadcn/ui 组件 (button.tsx + card.tsx)
     ├── lib/utils.ts        # cn() helper (clsx + tailwind-merge)
     └── pages/
-        └── HomePage.tsx    # Phase 36-T1 占位页
+        ├── HomePage.tsx    # Phase 36-T1 占位页
+        ├── IngestPage.tsx  # Phase 36-T2a 拖拽上传
+        └── PreviewPage.tsx # Phase 36-T2b 分块预览 (counter-based)
 ```
 
 ### 开发流程

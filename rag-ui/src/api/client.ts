@@ -21,10 +21,29 @@ import type { paths } from "./schema";
  */
 type Path<M extends keyof paths, P extends keyof paths[M]> = paths[M][P];
 
+/**
+ * IngestJob — wire shape returned by GET /api/ingest/{jobId}.
+ *
+ * The backend's rag-core IngestJob record (see rag-core/.../model/IngestJob.java)
+ * exposes the chunk pipeline as **counters** (totalChunks / embeddedChunks /
+ * upsertedChunks / failedChunks) — it does NOT return the actual chunk text.
+ * Phase 36-T2b's preview page surfaces those counters as a "Chunk Pipeline"
+ * panel (semantically equivalent to "show me how this job split") without
+ * needing a backend change. Surfacing the chunk text would require adding
+ * a new endpoint (e.g. GET /api/ingest/{jobId}/chunks) — that's out of scope
+ * for T2b per the task body's "不要碰 backend" rule.
+ */
 export interface IngestJob {
   jobId: string;
   tenantId: string;
+  documentId?: string;
+  kbVersion?: string | null;
   status: "PENDING" | "PROCESSING" | "READY" | "PUBLISHED" | "FAILED";
+  /** Phase 36-T2b: chunk pipeline counters from rag-core IngestJob record. */
+  totalChunks?: number;
+  embeddedChunks?: number;
+  upsertedChunks?: number;
+  failedChunks?: number;
   createdAt?: string;
   updatedAt?: string;
   documentCount?: number;
