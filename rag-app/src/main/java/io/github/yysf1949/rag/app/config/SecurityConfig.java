@@ -1,5 +1,6 @@
 package io.github.yysf1949.rag.app.config;
 
+import io.github.yysf1949.rag.app.security.JwtTenantFilter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -47,12 +48,21 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(
             HttpSecurity http,
             @Value("${rag.security.api-key:}") String apiKey,
-            ApiKeyAuthenticationFilter apiKeyFilter) throws Exception {
+            ApiKeyAuthenticationFilter apiKeyFilter,
+            JwtTenantFilter jwtTenantFilter) throws Exception {
 
         boolean authEnabled = apiKey != null && !apiKey.isBlank();
 
         http.csrf(csrf -> csrf.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+
+        // Phase 34 (R5+R6) — JwtTenantFilter runs FIRST in the chain so
+        // JWT verification (or dev-mode tenant passthrough) happens before
+        // Spring Security's own authentication filters. The filter handles
+        // 401 / 429 short-circuits internally, so successful requests fall
+        // through to the API key filter (if enabled) and then to
+        // authorization rules.
+        http.addFilterBefore(jwtTenantFilter, UsernamePasswordAuthenticationFilter.class);
 
         if (authEnabled) {
             log.info("🔒 API key authentication ENABLED (rag.security.api-key is set)");

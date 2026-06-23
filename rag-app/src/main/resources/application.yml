@@ -153,6 +153,42 @@ rag:
   # When blank, all endpoints are open (dev/test mode).
   security:
     api-key: ${RAG_API_KEY:}
+    # ─────────────────────────────────────────────────────────────
+    # Phase 34 (R5) — JWT/OAuth2 gateway layer
+    # ─────────────────────────────────────────────────────────────
+    # jwt.enabled: when true, JwtTenantFilter requires a valid HS256
+    # Bearer token on every API request. When false (default for
+    # dev/test), the filter falls back to a dev-mode passthrough that
+    # accepts X-Tenant-Id without a JWT (with a WARN log). Production
+    # MUST set this to true and supply a strong secret.
+    #
+    # jwt.secret: HMAC-SHA256 shared secret. Must be at least 32 bytes
+    # to satisfy HS256; supply via env var JWT_SECRET in production.
+    # The default below is intentionally weak so JWT misconfiguration
+    # fails loud at startup rather than running with a guessable key.
+    #
+    # jwt.expiration-seconds: TTL for tokens issued by the mock
+    # /api/auth/mock-token endpoint (the production IdP would issue its
+    # own; this is purely a Phase 34 dev/test affordance).
+    #
+    # jwt.dev-mode: when true (and jwt.enabled=false), the dev
+    # passthrough is active. Set false in production even if
+    # jwt.enabled is false, so a missing config fails closed with 401.
+    jwt:
+      enabled: ${JWT_ENABLED:false}
+      secret: ${JWT_SECRET:}
+      expiration-seconds: ${JWT_EXPIRATION:3600}
+      dev-mode: ${JWT_DEV_MODE:true}
+    # ─────────────────────────────────────────────────────────────
+    # Phase 34 (R6) — Per-tenant rate limiter (Redis sliding window)
+    # ─────────────────────────────────────────────────────────────
+    # The limiter keys on tenant id (the value of X-Tenant-Id once
+    # the JWT/dev-mode gateway has accepted the request). When Redis
+    # is down, the limiter fails open with a warn log — rate limiting
+    # is a QoS feature, not a security control.
+    rate-limit:
+      requests-per-window: ${RATE_LIMIT_REQUESTS:60}
+      window-seconds: ${RATE_LIMIT_WINDOW_SECONDS:60}
   tenant:
     # HMAC-SHA256 shared secret for X-Tenant-Id header verification.
     # When blank, tenant signature verification is DISABLED (dev/test only).
