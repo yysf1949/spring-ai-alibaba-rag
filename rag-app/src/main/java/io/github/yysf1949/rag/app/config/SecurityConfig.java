@@ -10,9 +10,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -40,6 +42,7 @@ import java.util.List;
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
@@ -56,13 +59,13 @@ public class SecurityConfig {
         http.csrf(csrf -> csrf.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
-        // Phase 34 (R5+R6) — JwtTenantFilter runs FIRST in the chain so
-        // JWT verification (or dev-mode tenant passthrough) happens before
-        // Spring Security's own authentication filters. The filter handles
-        // 401 / 429 short-circuits internally, so successful requests fall
-        // through to the API key filter (if enabled) and then to
-        // authorization rules.
-        http.addFilterBefore(jwtTenantFilter, UsernamePasswordAuthenticationFilter.class);
+        // Phase 34 (R5+R6) — JwtTenantFilter runs BEFORE AnonymousAuthenticationFilter
+        // so the JWT-derived ROLE_ADMIN survives the chain. (addFilterBefore UsernamePasswordAuthenticationFilter
+        // was too late — AnonymousAuthenticationFilter runs BEFORE
+        // UsernamePasswordAuthenticationFilter in the default Spring Security 6
+        // chain and would overwrite our context with an anonymous one. This caused
+        // every /admin/** request to 403 in T34b MockAdminControllerTest.)
+        http.addFilterBefore(jwtTenantFilter, AnonymousAuthenticationFilter.class);
 
         if (authEnabled) {
             log.info("🔒 API key authentication ENABLED (rag.security.api-key is set)");
@@ -70,12 +73,24 @@ public class SecurityConfig {
                     .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                     .requestMatchers("/actuator/info").permitAll()
                     .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                    // Phase 34-T34b — Admin endpoints require ROLE_ADMIN. The
+                    // controller also enforces this via @PreAuthorize (defence
+                    // in depth: URL-level first, method-level second).
+                    .requestMatchers("/admin/**").hasRole("ADMIN")
                     .anyRequest().authenticated()
-            ).addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class);
+            ).addFilterBefore(apiKeyFilter, AnonymousAuthenticationFilter.class);
         } else {
             log.warn("⚠️ API key authentication DISABLED (rag.security.api-key is not set). "
                     + "All endpoints are open. Set rag.security.api-key in production.");
-            http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
+            http.authorizeHttpRequests(auth -> auth
+                    .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                    .requestMatchers("/actuator/info").permitAll()
+                    .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                    // Same admin gate — dev mode must still block /admin/** unless
+                    // the caller carries ROLE_ADMIN (which dev anonymous does NOT
+                    // get, so admin endpoints return 403 in dev mode by design).
+                    .requestMatchers("/admin/**").hasRole("ADMIN")
+                    .anyRequest().permitAll());
         }
 
         return http.build();

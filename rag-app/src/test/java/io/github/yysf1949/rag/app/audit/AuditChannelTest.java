@@ -2,12 +2,12 @@ package io.github.yysf1949.rag.app.audit;
 
 import io.github.yysf1949.rag.core.model.AuditEvent;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.slf4j.Logger;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -17,6 +17,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -177,5 +178,111 @@ class AuditChannelTest {
     /** Re-derive the expected wire-format payload from the event. */
     private static String expectedKv(AuditEvent event) {
         return AuditChannel.toJson(event);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Phase 34-T34b — recordTenantConfigChange helper
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void recordTenantConfigChange_emitsTypedEventWithOldAndNewConfig() {
+        Logger mockLogger = mock(Logger.class);
+        AuditChannel channel = new AuditChannel(mockLogger);
+
+        channel.recordTenantConfigChange(
+                "tenant-A",
+                "{\"kbWhitelist\":[\"kb-1\"]}",
+                "{\"kbWhitelist\":[\"kb-1\",\"kb-2\"]}",
+                "admin-1",
+                "req-42");
+
+        // Capture the AuditEvent that record(...) received and verify its
+        // shape — this is the contract the admin endpoint depends on.
+        ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+        org.mockito.Mockito.verify(mockLogger, atLeastOnce()).info(anyString());
+        org.mockito.Mockito.verify(mockLogger).info(anyString());
+        // We can't easily capture the AuditEvent through the SLF4J mock
+        // (the channel builds it internally), so verify via the wire-format
+        // string instead — the AuditChannel.toJson() output is deterministic.
+        ArgumentCaptor<String> kvCaptor = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(mockLogger).info(kvCaptor.capture());
+        String kv = kvCaptor.getValue();
+
+        assertTrue(kv.contains("audit.type=TENANT_CONFIG_CHANGE"), kv);
+        assertTrue(kv.contains("audit.tenantId=tenant-A"), kv);
+        assertTrue(kv.contains("audit.actorId=\"admin-1\"")
+                        && kv.contains("admin-1"),
+                "actorId must be the JWT subject \"admin-1\": " + kv);
+        assertTrue(kv.contains("audit.requestId=\"req-42\"")
+                        && kv.contains("req-42"),
+                "requestId must be \"req-42\": " + kv);
+        assertTrue(kv.contains("audit.resourceId=\"tenant-A\""), kv);
+        assertTrue(kv.contains("audit.outcome=SUCCESS"), kv);
+        // The kv wire format escapes inner JSON quotes with a literal
+        // backslash — match the same shape via "\\\"" (Java escape of \").
+        assertTrue(kv.contains("audit.fields.oldConfig=\"{\\\"kbWhitelist\\\":[\\\"kb-1\\\"]}\""), kv);
+        assertTrue(kv.contains("audit.fields.newConfig=\"{\\\"kbWhitelist\\\":[\\\"kb-1\\\",\\\"kb-2\\\"]}\""), kv);
+    }
+
+    @Test
+    void recordTenantConfigChange_omitsOldConfigWhenNull() {
+        Logger mockLogger = mock(Logger.class);
+        AuditChannel channel = new AuditChannel(mockLogger);
+
+        // First-write case — oldConfig is null, the wire format MUST NOT
+        // include the oldConfig key at all (audit receiver splits on `=`).
+        channel.recordTenantConfigChange(
+                "tenant-new",
+                null /* first write */,
+                "{\"v\":1}",
+                "admin-2",
+                null);
+
+        ArgumentCaptor<String> kvCaptor = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(mockLogger).info(kvCaptor.capture());
+        String kv = kvCaptor.getValue();
+
+        assertTrue(kv.contains("audit.type=TENANT_CONFIG_CHANGE"), kv);
+        assertFalse(kv.contains("audit.fields.oldConfig"),
+                "oldConfig must be absent on first write (not present-and-null), got: " + kv);
+        assertTrue(kv.contains("audit.fields.newConfig=\"{\\\"v\\\":1}\""), kv);
+    }
+
+    @Test
+    void recordTenantConfigChange_rejectsNullTenantAndNullNewConfig() {
+        Logger mockLogger = mock(Logger.class);
+        AuditChannel channel = new AuditChannel(mockLogger);
+
+        try {
+            channel.recordTenantConfigChange(null, "x", "y", "u", null);
+            assertTrue(false, "expected NPE for null tenantId");
+        } catch (NullPointerException expected) {
+            assertTrue(expected.getMessage().contains("tenantId"));
+        }
+
+        try {
+            channel.recordTenantConfigChange("t", "x", null, "u", null);
+            assertTrue(false, "expected NPE for null newConfig");
+        } catch (NullPointerException expected) {
+            assertTrue(expected.getMessage().contains("newConfig"));
+        }
+
+        // Neither call may have invoked the logger.
+        org.mockito.Mockito.verify(mockLogger, never()).info(anyString());
+    }
+
+    @Test
+    void recordTenantConfigChange_absorbedByLoggerFailure() {
+        Logger mockLogger = mock(Logger.class);
+        org.mockito.Mockito.doThrow(new RuntimeException("disk full"))
+                .when(mockLogger).info(anyString());
+        AuditChannel channel = new AuditChannel(mockLogger);
+
+        // MUST NOT throw — admin endpoint semantics depend on this.
+        channel.recordTenantConfigChange(
+                "tenant-A", "old", "new", "admin", "req");
+
+        assertEquals(1, channel.errorCount());
+        assertEquals(0, channel.emittedCount());
     }
 }

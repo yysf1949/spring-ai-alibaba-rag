@@ -242,12 +242,22 @@ public class JwtTenantFilter extends OncePerRequestFilter {
                 auths.add(new SimpleGrantedAuthority("SCOPE_" + s));
             }
         }
+        // Phase 34-T34b — promote the "admin" scope into ROLE_ADMIN so
+        // @PreAuthorize("hasRole('ADMIN')") matches on /admin/** endpoints.
+        // We intentionally do NOT map other scopes to roles — admin is a
+        // coarse single-role gate by design (single ROLE_ADMIN per spec
+        // prohibition against complex RBAC).
+        if (claims.scopes.contains("admin")) {
+            auths.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        }
         JwtPrincipal principal = new JwtPrincipal(claims.subject, claims.tenantId, claims.scopes);
         Authentication authentication =
                 new JwtAuthentication(principal, auths);
         SecurityContext ctx = SecurityContextHolder.createEmptyContext();
         ctx.setAuthentication(authentication);
         SecurityContextHolder.setContext(ctx);
+        log.debug("🔐 T34b installed JWT auth subject={} tenant={} authorities={}",
+                claims.subject, claims.tenantId, auths);
         if (claims.tenantId != null) MDC.put("jwt.tenant", claims.tenantId);
         if (claims.subject != null) MDC.put("jwt.sub", claims.subject);
     }

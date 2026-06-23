@@ -215,6 +215,44 @@ public class AuditChannel {
         return emitted.get();
     }
 
+    /**
+     * Phase 34-T34b — Convenience helper for the admin tenant-config
+     * endpoint. Emits a {@link AuditEvent.Type#TENANT_CONFIG_CHANGE} event
+     * with the old/new config + actor in the flat fields map so compliance
+     * tooling can reconstruct who changed what and when.
+     *
+     * <p>Failure semantics match {@link #record(AuditEvent)}: appender
+     * errors are absorbed and tracked via {@link #errorCount()}. Callers
+     * MUST NOT treat this method as a "config was durably persisted"
+     * signal — for that, persist the config first and call this second.</p>
+     *
+     * @param tenantId    the tenant whose config is being changed (never null)
+     * @param oldConfig   the previous config payload (may be null for "create new tenant")
+     * @param newConfig   the new config payload (never null)
+     * @param actorUserId the user / service-account that triggered the change (may be null for system)
+     * @param requestId   request correlation id (may be null)
+     */
+    public void recordTenantConfigChange(String tenantId, String oldConfig, String newConfig,
+                                          String actorUserId, String requestId) {
+        Objects.requireNonNull(tenantId, "tenantId");
+        Objects.requireNonNull(newConfig, "newConfig");
+        java.util.Map<String, Object> fields = new LinkedHashMap<>();
+        if (oldConfig != null) {
+            fields.put("oldConfig", oldConfig);
+        }
+        fields.put("newConfig", newConfig);
+        // outcome defaults to SUCCESS — callers wanting DENIED/FAILURE can
+        // call record(AuditEvent.of(...)) directly.
+        record(AuditEvent.of(
+                AuditEvent.Type.TENANT_CONFIG_CHANGE,
+                tenantId,
+                actorUserId,
+                requestId,
+                tenantId /* resourceId = tenant itself */,
+                "SUCCESS",
+                fields));
+    }
+
     /** Total events whose emit threw — alerts on this gauge. */
     public long errorCount() {
         return errored.get();
