@@ -1,6 +1,7 @@
 stages:
   - build
   - test
+  - ui-build
   - eval
   - report
 
@@ -44,6 +45,32 @@ unit-test:
     paths:
       - rag-agent/target/surefire-reports/
     expire_in: 7 days
+
+# Phase 36-T1: rag-ui build gate.
+# Runs `npm ci` + `npm run build` against the OpenAPI TS client. The
+# build runs `tsc -b && vite build`, so any TypeScript regression in
+# the generated client (or hand-written components) fails the pipeline
+# before the eval/manual stages pick up the artifact.
+rag-ui-build:
+  stage: ui-build
+  image: node:20-alpine
+  variables:
+    # Use a China-region mirror in CN runners to avoid registry.npmjs.org timeouts.
+    NPM_CONFIG_REGISTRY: "https://registry.npmmirror.com"
+  script:
+    - cd rag-ui
+    - npm ci --no-audit --no-fund
+    - npm run build
+  artifacts:
+    paths:
+      - rag-ui/dist/
+    expire_in: 1 hour
+  rules:
+    # Only run if rag-ui/ exists in this ref (lets older branches skip
+    # the stage without breaking the pipeline).
+    - changes:
+        - rag-ui/**/*
+        - docs/openapi/openapi.json
 
 # Eval gate — manual trigger with the two required protected variables.
 # If either var is missing the @EnabledIfEnvironmentVariable guard inside

@@ -1,0 +1,205 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "RAG Admin API",
+    "version": "0.1.0",
+    "description": "REST surface for the RAG admin UI. Mirrors rag-app controllers:\n- IngestController (POST /api/ingest, POST /api/ingest/multipart, GET /api/ingest/{jobId}, POST /api/ingest/{jobId}/publish)\n- RagController (POST /api/qa)\n\nThis file is the single source of truth for the TypeScript client generated\nunder rag-ui/src/api/. Hand-curated to match the existing @Operation / @Tag\nannotations; T2/T3 will regenerate from springdoc once that endpoint is\npublished on the live backend."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local dev (proxied through Vite at http://localhost:5173)"
+    }
+  ],
+  "tags": [
+    { "name": "Ingest", "description": "Asynchronous document ingest endpoints" },
+    { "name": "QA", "description": "Online question-answering endpoints" }
+  ],
+  "paths": {
+    "/api/ingest": {
+      "post": {
+        "tags": ["Ingest"],
+        "summary": "Submit a new ingest job (JSON request)",
+        "operationId": "submitIngest",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/IngestRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IngestJob" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ingest/multipart": {
+      "post": {
+        "tags": ["Ingest"],
+        "summary": "Submit a new ingest job (multipart upload, Phase 35)",
+        "operationId": "submitIngestMultipart",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file", "request"],
+                "properties": {
+                  "file": { "type": "string", "format": "binary" },
+                  "request": { "$ref": "#/components/schemas/IngestRequest" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IngestJob" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ingest/{jobId}": {
+      "get": {
+        "tags": ["Ingest"],
+        "summary": "Get the current snapshot of an ingest job",
+        "operationId": "getIngestJob",
+        "parameters": [
+          { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job snapshot",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IngestJob" }
+              }
+            }
+          },
+          "404": { "description": "Job not found" }
+        }
+      }
+    },
+    "/api/ingest/{jobId}/publish": {
+      "post": {
+        "tags": ["Ingest"],
+        "summary": "Atomically promote a READY job to PUBLISHED",
+        "operationId": "publishIngestJob",
+        "parameters": [
+          { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job published",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IngestJob" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/qa": {
+      "post": {
+        "tags": ["QA"],
+        "summary": "Answer a user query against the tenant knowledge base",
+        "operationId": "submitQuery",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/Query" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Answer produced (possibly a fallback)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Answer" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "IngestJobStatus": {
+        "type": "string",
+        "enum": ["PENDING", "PROCESSING", "READY", "PUBLISHED", "FAILED"]
+      },
+      "IngestJob": {
+        "type": "object",
+        "properties": {
+          "jobId": { "type": "string" },
+          "tenantId": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/IngestJobStatus" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "documentCount": { "type": "integer" },
+          "errorMessage": { "type": "string", "nullable": true }
+        },
+        "required": ["jobId", "tenantId", "status"]
+      },
+      "IngestRequest": {
+        "type": "object",
+        "properties": {
+          "tenantId": { "type": "string" },
+          "sourceUri": { "type": "string" },
+          "contentType": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["sourceUri"]
+      },
+      "Query": {
+        "type": "object",
+        "properties": {
+          "userId": { "type": "string" },
+          "sessionId": { "type": "string", "nullable": true },
+          "rawText": { "type": "string" },
+          "permissionTags": { "type": "array", "items": { "type": "string" } },
+          "topK": { "type": "integer" },
+          "kbVersion": { "type": "string", "nullable": true }
+        },
+        "required": ["userId", "rawText"]
+      },
+      "Answer": {
+        "type": "object",
+        "properties": {
+          "answerText": { "type": "string" },
+          "source": { "type": "string", "enum": ["CACHE", "LLM", "FALLBACK_RULE"] },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sourceUri": { "type": "string" },
+                "snippet": { "type": "string" },
+                "score": { "type": "number" }
+              }
+            }
+          }
+        },
+        "required": ["answerText", "source"]
+      }
+    }
+  }
+}

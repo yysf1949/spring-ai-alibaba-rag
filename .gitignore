@@ -49,3 +49,12 @@ rag-embedding/.env
 .mvn/
 mvnw
 mvnw.cmd
+
+# rag-ui (Phase 36-T1): React/Vite build artifacts
+rag-ui/node_modules/
+rag-ui/dist/
+rag-ui/.vite/
+rag-ui/src/api/client/    # openapi-typescript-codegen output (regenerable)
+# Keep rag-ui/src/api/schema.d.ts (hand-typed stub for tsc to compile before first codegen run)
+# tsc -b incremental build cache — regenerate from `tsc -b` source build
+rag-ui/tsconfig.tsbuildinfo

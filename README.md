@@ -270,6 +270,76 @@ scripts/cluster10-evolution-test.sh →  4/4 PASS (版本升级/固定/deprecati
 
 ---
 
+## rag-ui (Phase 36-T1)
+
+> RAG admin UI — React 18 + Vite + Tailwind + shadcn/ui + OpenAPI TypeScript client.
+> Phase 36-T1 落地:**项目骨架 + OpenAPI TS client 自动化**。业务 UI 在 T2/T3。
+
+### 目录结构
+
+```
+rag-ui/
+├── components.json         # shadcn/ui 配置 (slate base + CSS variables)
+├── index.html              # Vite entry
+├── package.json            # Vite 5 + React 18 + TS 5.6 + Tailwind 3
+├── postcss.config.js
+├── tailwind.config.js
+├── tsconfig.json           # strict mode + @/* path alias
+├── tsconfig.node.json
+├── vite.config.ts          # /api proxy → http://localhost:8080
+└── src/
+    ├── App.tsx             # 根组件 (BrowserRouter + HomePage)
+    ├── main.tsx            # React 18 createRoot
+    ├── index.css           # Tailwind + shadcn/ui 主题变量
+    ├── vite-env.d.ts       # import.meta.env 类型声明
+    ├── api/
+    │   ├── client.ts       # 手写 runtime client (ingestApi.getJob/submit/publish + qaApi.submit)
+    │   └── schema.d.ts     # 手写 OpenAPI 类型 stub (首次 npm run openapi:gen 后替换)
+    ├── components/ui/      # shadcn/ui 组件 (button.tsx + card.tsx)
+    ├── lib/utils.ts        # cn() helper (clsx + tailwind-merge)
+    └── pages/
+        └── HomePage.tsx    # Phase 36-T1 占位页
+```
+
+### 开发流程
+
+```bash
+# 1. 安装依赖 (国内网络建议先设镜像)
+npm config set registry https://registry.npmmirror.com
+cd rag-ui
+npm install
+
+# 2. 启动 dev server (默认 :5173, /api/* 自动 proxy 到 :8080 的 rag-app)
+npm run dev
+
+# 3. Type-check
+npm run lint     # = tsc -b --noEmit
+
+# 4. 生产构建
+npm run build    # = tsc -b && vite build, 产物在 rag-ui/dist/
+
+# 5. 预览生产构建
+npm run preview
+```
+
+### OpenAPI 重新生成
+
+> 单源真值:后端 controller 标注 + `docs/openapi/openapi.json`。
+> T2 之后会改为从 live `rag-app` 的 `/v3/api-docs` 自动拉取(届时不再手工维护 `openapi.json`)。
+
+```bash
+cd rag-ui
+npm run openapi:gen
+# 1. openapi-typescript  → src/api/schema.d.ts
+# 2. openapi-typescript-codegen → src/api/client/
+```
+
+### CI 闸门
+
+`.gitlab-ci.yml` 增了 `ui-build` stage(在 `unit-test` 之后,`eval` 之前),跑 `npm ci && npm run build`,任何 TS 错误 / Vite 构建错误 → pipeline 红。详见 `.gitlab-ci.yml` `rag-ui-build` job。
+
+---
+
 ## License
 
 Private repository. © 2026 周礼攀.
