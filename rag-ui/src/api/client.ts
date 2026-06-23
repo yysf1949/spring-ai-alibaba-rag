@@ -70,6 +70,33 @@ const http: AxiosInstance = axios.create({
  * shipped. T2 will add a `listJobs()` helper once the backend exposes
  * `/api/ingest/jobs` (Phase 35 currently exposes per-job GET only).
  */
+/**
+ * Metadata that travels in the `request` part of the multipart upload.
+ * Mirrors the JSON shape the IngestController expects — we hand-encode
+ * it as a Blob so the wire field is `Content-Type: application/json`
+ * (Spring's @RequestPart("request") binding is content-type-sensitive).
+ *
+ * Phase 36-T2a wire contract (Phase 35 narrow-scope rebuild v2):
+ *   POST /api/ingest/multipart
+ *     part "file"    : application/pdf
+ *     part "request" : application/json (this shape)
+ *   → 202 Accepted + IngestJob
+ *
+ * The kbId dropdown in /ingest defaults to "default" so the user can
+ * drag-drop a PDF without picking a KB first; the controller treats
+ * kbId="default" as a real value (no special-casing in backend).
+ */
+export interface MultipartIngestMeta {
+  kbId: string;
+  documentId: string;
+  documentVersion: number;
+  title: string;
+  sourceUri: string;
+  permissionTags?: string[];
+  /** Required by the backend @Valid, but the file wraps as a single-section Document server-side — send an empty list. */
+  sections: Array<{ heading?: string; content: string }>;
+}
+
 export const ingestApi = {
   /** GET /api/ingest/{jobId} — fetch a job snapshot. */
   getJob: async (jobId: string): Promise<IngestJob> => {
@@ -83,6 +110,101 @@ export const ingestApi = {
   submit: async (req: IngestRequest): Promise<IngestJob> => {
     const { data } = await http.post<IngestJob>("/ingest", req);
     return data;
+  },
+
+  /**
+   * POST /api/ingest/multipart — upload a single PDF + JSON metadata.
+   * Uses XMLHttpRequest (not axios) because we need the upload `progress`
+   * event for the on-screen progress bar; axios's request-body progress
+   * hook only works inside a browser fetch/XHR.
+   *
+   * Returns the freshly-created IngestJob on 202 Accepted. Rejects with
+   * the axios-flavoured Error on 4xx (the controller's ProblemDetail
+   * lands in `error.response.data` — `title` + `detail` fields are the
+   * user-facing message).
+   */
+  uploadMultipart: (args: {
+    file: File;
+    meta: MultipartIngestMeta;
+    onProgress?: (percent: number) => void;
+    signal?: AbortSignal;
+  }): Promise<IngestJob> => {
+    return new Promise<IngestJob>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const form = new FormData();
+      // The "file" part — backend does @RequestPart("file") MultipartFile.
+      form.append("file", args.file, args.file.name);
+      // The "request" part — JSON-encoded so @RequestPart("request") binding
+      // sees application/json. Sending an object would let the browser pick
+      // text/plain; a Blob forces the right Content-Type.
+      form.append(
+        "request",
+        new Blob([JSON.stringify(args.meta)], {
+          type: "application/json",
+        }),
+        "request.json",
+      );
+
+      xhr.open("POST", "/ingest/multipart");
+      // Tenant header is mandatory on /api/* — the rag-app controller's
+      // `requiredTenant` throws 401 if blank. The dev default "dev" is
+      // wired in MdcTenantFilter to fall through when no auth gateway is
+      // in front (Phase 36 dev story — production would inject this
+      // upstream). The backend rag-app also requires X-Tenant-Id to be
+      // non-blank; we send "dev" explicitly so callers don't have to
+      // remember to set it in the UI.
+      xhr.setRequestHeader("X-Tenant-Id", "dev");
+      // axios sets Accept: application/json, text/plain, */* by default;
+      // we mirror that so 4xx ProblemDetail bodies don't get opaque.
+      xhr.setRequestHeader("Accept", "application/json");
+
+      xhr.upload.addEventListener("progress", (ev) => {
+        if (ev.lengthComputable && args.onProgress) {
+          args.onProgress(Math.round((ev.loaded / ev.total) * 100));
+        }
+      });
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText) as IngestJob);
+          } catch (parseErr) {
+            reject(
+              new Error(
+                `uploadMultipart: backend returned ${xhr.status} but body was not JSON: ${xhr.responseText.slice(0, 200)}`,
+              ),
+            );
+          }
+        } else {
+          // 4xx/5xx — surface the ProblemDetail or raw body so the UI
+          // can show "Unsupported Media Type" / "Missing X-Tenant-Id" etc.
+          let detail = xhr.responseText;
+          try {
+            const parsed = JSON.parse(detail) as {
+              title?: string;
+              detail?: string;
+            };
+            detail = parsed.detail || parsed.title || detail;
+          } catch {
+            // not JSON, keep raw
+          }
+          reject(
+            new Error(
+              `uploadMultipart: HTTP ${xhr.status} ${xhr.statusText} — ${detail}`,
+            ),
+          );
+        }
+      });
+      xhr.addEventListener("error", () => {
+        reject(new Error("uploadMultipart: network error (XHR fired `error`)"));
+      });
+      xhr.addEventListener("abort", () => {
+        reject(new Error("uploadMultipart: aborted by caller"));
+      });
+      if (args.signal) {
+        args.signal.addEventListener("abort", () => xhr.abort());
+      }
+      xhr.send(form);
+    });
   },
 
   /** POST /api/ingest/{jobId}/publish — promote READY → PUBLISHED. */

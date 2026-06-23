@@ -1,12 +1,16 @@
 import { Routes, Route, Link } from "react-router-dom";
 import { HomePage } from "@/pages/HomePage";
+import { IngestPage } from "@/pages/IngestPage";
 import { Button } from "@/components/ui/button";
 
 /**
- * Root component — Phase 36-T1 scaffold.
+ * Root component — Phase 36-T1 scaffold + Phase 36-T2a /ingest page.
  *
- * Routing placeholder: only HomePage for now. T2 will add `/ingest`,
- * `/versions`, `/gradual-rollout` etc. See Phase 36 plan.
+ * Routing:
+ *   /        → HomePage (Phase 36 dashboard placeholder)
+ *   /ingest  → IngestPage (drag-drop PDF → /preview/{jobId})
+ *
+ * T2b will add /preview/{jobId}; T2c will add /versions/{kbId}.
  */
 export default function App() {
   return (
@@ -20,12 +24,16 @@ export default function App() {
             <Button asChild variant="ghost" size="sm">
               <Link to="/">Home</Link>
             </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/ingest">/ingest</Link>
+            </Button>
           </nav>
         </div>
       </header>
       <main>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/ingest" element={<IngestPage />} />
         </Routes>
       </main>
     </div>
