@@ -270,12 +270,13 @@ scripts/cluster10-evolution-test.sh →  4/4 PASS (版本升级/固定/deprecati
 
 ---
 
-## rag-ui (Phase 36-T1 + T2a + T2b)
+## rag-ui (Phase 36-T1 + T2a + T2b + T2c)
 
 > RAG admin UI — React 18 + Vite + Tailwind + shadcn/ui + OpenAPI TypeScript client.
 > Phase 36-T1 落地:**项目骨架 + OpenAPI TS client 自动化**。
 > Phase 36-T2a:`/ingest` 拖拽上传页 (react-dropzone + multipart)。
 > Phase 36-T2b:`/preview/{jobId}` 分块预览页 (chunk pipeline counters)。
+> Phase 36-T2c:`/versions` KB 版本对比页 (metadata-level diff)。
 
 ### 路由
 
@@ -283,14 +284,24 @@ scripts/cluster10-evolution-test.sh →  4/4 PASS (版本升级/固定/deprecati
 /                 → HomePage (Phase 36 dashboard 占位)
 /ingest           → IngestPage (拖拽 PDF → /preview/{jobId})
 /preview/:jobId   → PreviewPage (chunk pipeline counters + status banner + publish 按钮)
+/versions         → VersionsPage (KB 版本列表 + metadata diff)
 ```
 
 `/preview/{jobId}` 调 `GET /api/ingest/{jobId}`,渲染 4 个 chunk 计数器 (totalChunks / embeddedChunks / upsertedChunks / failedChunks) + 状态徽章。READY 状态下显示 Publish 按钮调 `POST /api/ingest/{jobId}/publish`。
+
+`/versions` 调 `GET /api/agent/kb-versions/{kbId}` (Phase 18 P2 `KbVersionController` in rag-agent),渲染 KbVersionMeta 列表 (newest→oldest) + 元数据 diff 面板 (docCount delta / status delta / sourceLabel delta / 时间戳 delta)。色码:bg-green-100 = added, bg-red-100 = removed, bg-amber-50 = changed, bg-white = unchanged。
 
 ### 已知 T2b 限制
 
 - **不展示 chunk 文本** — 后端 `GET /api/ingest/{jobId}` 当前只返 chunk **counters**,不返 chunk content/embedding 详情。展示 chunk 文本需新增 endpoint `GET /api/ingest/{jobId}/chunks`,超 T2b scope (任务 body 明确"不要碰 backend")。
 - **无高亮 (highlight)** — 任务 body 提的"react 自身 `<mark>` 高亮匹配关键词"在没 chunk 文本的前提下无法实现。留 TODO 给后续 phase。
+
+### 已知 T2c 限制
+
+- **Metadata diff 而非 chunk diff** — 任务 body 期望"v1 vs v2 chunks"色码对比,但后端**没有**任何 chunk-content 端点(`/api/ingest/{jobId}/chunks`、`/api/ingest/compare` 均不存在)。T2c 拿到的是 `KbVersionMeta` 元数据(versionId / status / docCount / 时间戳 / sourceLabel),所以 diff 面板**显式标注 "Metadata diff"** 让操作员知道这不是 chunk content 对比。
+- **diff 是按字段而非按 chunk** — 因为只有 docCount 计数,不是 chunks[] 数组。色码逻辑:docCount 右 > 左 = added (绿),右 < 左 = removed (红),其他字段值不等 = changed (琥珀),相等 = unchanged (白)。
+- **kbId 下拉是手写** — 跟 T2a/T2b 一致,后端没有 list-KBs 端点。Phase 36 期间 kbId 唯一合法值是 `default`。
+- **X-Tenant-Id 缺省 `dev`** — 跟 `/ingest` 一致(MdcTenantFilter dev fallback)。生产部署需注入上游 auth 网关。
 
 ### 目录结构
 
@@ -305,19 +316,20 @@ rag-ui/
 ├── tsconfig.node.json
 ├── vite.config.ts          # /api proxy → http://localhost:8080
 └── src/
-    ├── App.tsx             # 根组件 (BrowserRouter + HomePage + IngestPage + PreviewPage)
+    ├── App.tsx             # 根组件 (BrowserRouter + HomePage + IngestPage + PreviewPage + VersionsPage)
     ├── main.tsx            # React 18 createRoot
     ├── index.css           # Tailwind + shadcn/ui 主题变量
     ├── vite-env.d.ts       # import.meta.env 类型声明
     ├── api/
-    │   ├── client.ts       # 手写 runtime client (ingestApi.getJob/submit/uploadMultipart/publish + qaApi.submit)
+    │   ├── client.ts       # 手写 runtime client (ingestApi + qaApi + versionsApi)
     │   └── schema.d.ts     # 手写 OpenAPI 类型 stub (首次 npm run openapi:gen 后替换)
     ├── components/ui/      # shadcn/ui 组件 (button.tsx + card.tsx)
     ├── lib/utils.ts        # cn() helper (clsx + tailwind-merge)
     └── pages/
         ├── HomePage.tsx    # Phase 36-T1 占位页
         ├── IngestPage.tsx  # Phase 36-T2a 拖拽上传
-        └── PreviewPage.tsx # Phase 36-T2b 分块预览 (counter-based)
+        ├── PreviewPage.tsx # Phase 36-T2b 分块预览 (counter-based)
+        └── VersionsPage.tsx# Phase 36-T2c KB 版本对比 (metadata-level diff)
 ```
 
 ### 开发流程

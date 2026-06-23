@@ -243,6 +243,50 @@ export const qaApi = {
   },
 };
 
+/**
+ * KB Versions API.
+ *
+ * Wire flow (mirrors backend GET /api/agent/kb-versions/{kbId}):
+ *   The KbVersionController lives in rag-agent (Phase 18 P2) and exposes
+ *   the KbVersionService port over HTTP. The list endpoint returns every
+ *   KbVersionMeta for the (X-Tenant-Id, kbId) pair — ordered newest→oldest
+ *   per the backend's listVersions contract — with status enum
+ *   DRAFT/STAGING/ACTIVE/DEPRECATED and chunk counters (docCount).
+ *
+ * Why we don't have chunk-level diff:
+ *   The backend exposes only metadata, not chunk content. A chunk-level
+ *   diff (v1 chunks vs v2 chunks side-by-side, color-coded) would need
+ *   a new endpoint — out of scope for T2c. We surface a metadata-level
+ *   diff instead (docCount delta, status delta, sourceLabel diff,
+ *   timestamp gap). The UI labels this honestly as "Metadata diff"
+ *   so operators don't confuse it with chunk content.
+ */
+export type KbVersionStatus = "DRAFT" | "STAGING" | "ACTIVE" | "DEPRECATED";
+
+export interface KbVersionMeta {
+  versionId: number;
+  status: KbVersionStatus;
+  createdAt: string;
+  publishedAt: string | null;
+  docCount: number;
+  sourceLabel: string | null;
+}
+
+export interface KbVersionsListResponse {
+  kbId: string;
+  versions: KbVersionMeta[];
+}
+
+export const versionsApi = {
+  /** GET /api/agent/kb-versions/{kbId} — list every KbVersionMeta for one KB. */
+  listVersions: async (kbId: string): Promise<KbVersionsListResponse> => {
+    const { data } = await http.get<KbVersionsListResponse>(
+      `/agent/kb-versions/${encodeURIComponent(kbId)}`,
+    );
+    return data;
+  },
+};
+
 // Re-export the paths type for downstream T2/T3 to use when they
 // wire up codegen output. The current `paths` import is intentionally
 // a `type` import — it produces no runtime JS, only type-level links.

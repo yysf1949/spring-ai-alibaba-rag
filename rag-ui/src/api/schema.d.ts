@@ -25,4 +25,26 @@ export interface paths {
       responses: { 200: { content: { "application/json": unknown } } };
     };
   };
+  "/api/agent/kb-versions/{kbId}": {
+    get: {
+      parameters: { path: { kbId: string } };
+      responses: {
+        200: {
+          content: {
+            "application/json": {
+              kbId: string;
+              versions: Array<{
+                versionId: number;
+                status: "DRAFT" | "STAGING" | "ACTIVE" | "DEPRECATED";
+                createdAt: string;
+                publishedAt: string | null;
+                docCount: number;
+                sourceLabel: string | null;
+              }>;
+            };
+          };
+        };
+      };
+    };
+  };
 }

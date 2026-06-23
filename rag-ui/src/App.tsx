@@ -2,17 +2,17 @@ import { Routes, Route, Link } from "react-router-dom";
 import { HomePage } from "@/pages/HomePage";
 import { IngestPage } from "@/pages/IngestPage";
 import { PreviewPage } from "@/pages/PreviewPage";
+import { VersionsPage } from "@/pages/VersionsPage";
 import { Button } from "@/components/ui/button";
 
 /**
- * Root component — Phase 36-T1 scaffold + T2a /ingest + T2b /preview.
+ * Root component — Phase 36-T1 scaffold + T2a /ingest + T2b /preview + T2c /versions.
  *
  * Routing:
  *   /                  → HomePage (Phase 36 dashboard placeholder)
  *   /ingest            → IngestPage (drag-drop PDF → /preview/{jobId})
  *   /preview/:jobId    → PreviewPage (chunk pipeline counters)
- *
- * T2c will add /versions/{kbId}.
+ *   /versions          → VersionsPage (KB version metadata diff)
  */
 export default function App() {
   return (
@@ -29,6 +29,9 @@ export default function App() {
             <Button asChild variant="ghost" size="sm">
               <Link to="/ingest">/ingest</Link>
             </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/versions">/versions</Link>
+            </Button>
           </nav>
         </div>
       </header>
@@ -37,6 +40,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/ingest" element={<IngestPage />} />
           <Route path="/preview/:jobId" element={<PreviewPage />} />
+          <Route path="/versions" element={<VersionsPage />} />
         </Routes>
       </main>
     </div>
