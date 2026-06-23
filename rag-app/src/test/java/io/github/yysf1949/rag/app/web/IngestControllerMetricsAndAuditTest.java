@@ -55,9 +55,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DirtiesContext // each test gets a fresh ApplicationContext so the Spring-managed MeterRegistry starts empty
 @TestPropertySource(properties = {
         "spring.main.web-application-type=servlet",
+        "spring.rag.redis.enabled=false",
         "spring.data.redis.host=nonexistent",
-        "spring.data.redis.port=0"
+        "spring.data.redis.port=0",
+        "spring.ai.openai.api-key=test-key"
 })
+@org.springframework.context.annotation.ComponentScan(
+        excludeFilters = @org.springframework.context.annotation.ComponentScan.Filter(
+                type = org.springframework.context.annotation.FilterType.REGEX,
+                pattern = "io\\.github\\.ysf1949\\.rag\\.agent\\..*"))
 class IngestControllerMetricsAndAuditTest {
 
     @Autowired

@@ -1,0 +1,95 @@
+# Prometheus alerting rules — Phase 32 T3
+# Drop into /etc/prometheus/rules/ on Prometheus server, OR reference via
+# `rule_files: ['/etc/prometheus/rules/*.yml']` in prometheus.yml.
+
+groups:
+  - name: rag_high_latency
+    interval: 30s
+    rules:
+      - alert: RagQaHighP95Latency
+        expr: histogram_quantile(0.95, sum(rate(rag_qa_latency_ms_seconds_bucket[5m])) by (le)) > 3
+        for: 5m
+        labels:
+          severity: warning
+          component: rag-qa
+        annotations:
+          summary: "RAG QA P95 latency > 3s for 5min"
+          description: "P95 latency {{ $value }}s — investigate QAServiceImpl hot path"
+
+  - name: rag_circuit_breaker
+    interval: 30s
+    rules:
+      - alert: RagCircuitBreakerOpen
+        expr: resilience4j_circuitbreaker_state{state="open"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          component: rag-resilience
+        annotations:
+          summary: "Resilience4j circuit breaker OPEN"
+          description: "Circuit breaker {{ $labels.name }} open for >1min — provider/Redis likely degraded"
+
+  - name: rag_cache_health
+    interval: 1m
+    rules:
+      - alert: RagAnswerCacheHitRatioLow
+        expr: rag_qa_cache_hit_ratio < 0.30
+        for: 10m
+        labels:
+          severity: warning
+          component: rag-cache
+        annotations:
+          summary: "AnswerCache hit ratio < 30% for 10min"
+          description: "Cache hit ratio {{ $value | humanizePercentage }} — review cache TTL or query patterns"
+
+  - name: rag_retrieval_quality
+    interval: 1m
+    rules:
+      - alert: RagEmptyRetrievalHigh
+        expr: rate(rag_qa_empty_retrieval_total[5m]) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: rag-retrieval
+        annotations:
+          summary: "Empty retrieval rate > 10% for 5min"
+          description: "Empty retrieval rate {{ $value | humanizePercentage }} — check KB ingestion or query rewrite"
+
+  - name: rag_eval_regression
+    interval: 5m
+    rules:
+      - alert: RagEvalRegressionCritical
+        expr: rag_eval_recall_at_10 < 0.85
+        for: 5m
+        labels:
+          severity: critical
+          component: rag-eval
+        annotations:
+          summary: "Eval Recall@10 < 85% — regression"
+          description: "Recall@10 dropped to {{ $value | humanizePercentage }} — investigate recent KB or model changes"
+
+  - name: rag_redis_health
+    interval: 1m
+    rules:
+      - alert: RagRedisMemoryHigh
+        expr: redis_used_memory_bytes / redis_max_memory_bytes > 0.80
+        for: 5m
+        labels:
+          severity: warning
+          component: rag-redis
+        annotations:
+          summary: "Redis memory > 80% of maxmemory"
+          description: "Redis at {{ $value | humanizePercentage }} capacity — evict stale chunks or scale"
+
+  - name: rag_llm_errors
+    interval: 1m
+    rules:
+      - alert: RagLlmHighErrorRate
+        expr: rate(rag_llm_errors_total[5m]) / rate(rag_llm_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: rag-llm
+        annotations:
+          summary: "LLM 4xx/5xx rate > 5% for 5min"
+          description: "LLM error rate {{ $value | humanizePercentage }} — check provider status or rate limits"

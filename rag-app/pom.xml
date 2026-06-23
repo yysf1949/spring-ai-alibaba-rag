@@ -42,6 +42,12 @@
             <artifactId>rag-pipeline</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- Phase 9: Agent Action Layer — exposes /api/agent/invoke (L1/L2 tools) -->
+        <dependency>
+            <groupId>io.github.yysf1949.rag</groupId>
+            <artifactId>rag-agent</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- Resilience4j — surfaces RequestNotPermitted from QAServiceImpl
              so RagExceptionHandler can return HTTP 429. Same BOM as the
              pipeline module (parent version 2.2.0). -->
@@ -52,6 +58,10 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

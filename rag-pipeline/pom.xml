@@ -27,15 +27,13 @@
             <artifactId>rag-core</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- rag-embedding: test-only — tests use StubEmbeddingGateway directly.
+             Runtime wiring comes from rag-app (the application module). -->
         <dependency>
             <groupId>io.github.yysf1949.rag</groupId>
             <artifactId>rag-embedding</artifactId>
             <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.github.yysf1949.rag</groupId>
-            <artifactId>rag-redis</artifactId>
-            <version>${project.version}</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>com.alibaba.cloud.ai</groupId>
@@ -70,6 +68,13 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- H2 in-memory DB for KbVersionService integration tests (Phase 18 P2).
+                 Runtime classpath for rag-app H2 backend comes from the consuming module. -->
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

@@ -266,3 +266,73 @@ FT.searchParams()
 3. [RUNBOOK.md §2-3](./RUNBOOK.md) — 本地跑起来 (10 min)
 4. 本文 §3 在线链 — 理解 7 层降级 (10 min)
 5. [LESSONS.md](./LESSONS.md) — 看实际踩过的坑 (15 min)
+
+---
+
+## 9. Agent Action Layer (Phase 9)
+
+> **新增模块**: `rag-agent` — 把企业后端 Service 改造成 AI Agent 可调用的工具集。
+
+### 9.1 三层架构
+
+| 层 | 子包 | 职责 |
+|---|---|---|
+| 编排层 | `orchestration/` | 意图理解 + 工具选择 + 调用循环；`SpringAiAgentAdapter` 桥接 Spring AI 1.0.9 `FunctionCallingCallback` |
+| 动作层 | `action/` | `@ToolSpec` + `ToolRegistry` + 4 级风险分级 |
+| 治理层 | `governance/` | 身份 + 幂等 + 风险门控 + 审计（桥接到现有 `LlmAuditHook`） |
+
+### 9.2 4 级工具风险
+
+| 级别 | 示例 | 自动执行 | 幂等键 | 确认令牌 | 金额门控 |
+|---|---|---|---|---|---|
+| L1_READ | `kb_search` / `get_order` / `query_logistics` | ✅ | 不需要 | — | — |
+| L2_REVERSIBLE | `create_reminder_ticket` / `cancel_refund` / `doc_version` / `kb_version` | ✅ | 强制 | — | — |
+| L3_BUSINESS_STATE | `cancel_order` (100元) / `create_refund` (500元) / `create_complaint` / `execute_after_service` (500元) | ⚠️ 二次确认 | 强制 | 可选 | `maxAmountCents` |
+| L4_HIGH_RISK | `approve_refund` (10000元, admin 角色) | ❌ 需 admin | 强制 | **强制** | `maxAmountCents` |
+
+### 9.3 升级路径
+
+当前使用 Spring AI 1.0.9 `FunctionCallingCallback`。业务侧只依赖
+`ToolDescriptor` 抽象层，升级 2.0 `@Tool` 时只改 `SpringAiAgentAdapter` 一个文件。
+
+参考文章: 「路条编程」《Salesforce 36 亿美元押注 AI 客服》(2026-06-17)
+
+---
+
+## 10. Phase 10 — Agent Action Layer 升级
+
+### 10.1 扩展的 4 级风险
+
+Phase 9 建立了 4 级风险 enum + RiskGate 框架，Phase 10 真正落地：
+- **L1 (READ)** — `kb_search` / `get_order` / `query_logistics` / `list_active_coupons` / `query_user_info` / `get_member_benefits` / `check_stock` / `query_payment_channel` / `query_refund` / `calculate_refund_amount`
+- **L2 (REVERSIBLE)** — `create_reminder_ticket` / `cancel_refund` / `send_notification` / `doc_version` / `kb_version` / `generate_conversation_summary`
+- **L3 (BUSINESS_STATE)** — `cancel_order` (max 100元) / `create_refund` (max 500元, 确认令牌) / `issue_coupon` (max 200元) / `create_complaint` / `execute_after_service` (max 500元) / `apply_price_protection` (max 200元) / `submit_satisfaction_survey`
+- **L4 (HIGH_RISK)** — `approve_refund` (max 10000元, admin 角色强制, **确认令牌强制**)
+
+### 10.2 人工转接机制
+
+对齐「路条编程」文章 §"人工确认不是失败"：
+- `HandoffService.handoff(ctx)` 触发 5 种原因之一（AMOUNT_LIMIT_EXCEEDED / INSUFFICIENT_PRIVILEGE / RETRY_EXHAUSTED / BUSINESS_RULE_MANDATES_HUMAN / USER_REQUESTED）
+- `HandoffContext` 打包 Agent 已完成的工作（用户身份 + 工具链 + 规则匹配 + 风险说明）
+- `HumanReviewQueue` 内存版队列（生产可换 Jira/自研工单）
+- 转接后返回 `AgentOutcome.HANDOFF_REQUIRED` + `handoffContext` 字段
+
+### 10.3 5 大评估指标
+
+对齐「路条编程」文章 §"评估指标要变"：
+- `agent.tool.invocations` (counter, tags: tool, outcome) — 端到端调用计数
+- `agent.tool.latency` (timer, tag: tool) — 耗时分布
+- `agent.handoffs` (counter, tags: tool, reason, channel) — 转人工次数
+- `agent.idempotency.replays` (counter, tag: tool) — 幂等回放次数
+- `agent.tool.errors` (counter, tags: tool, type) — 系统错误（跟业务 FAILURE 区分）
+
+### 10.4 多渠道接入层 (Phase 10 范围)
+
+- `ChannelAdapter` interface (统一封装入口)
+- `HttpChannelAdapter` — 现有 HTTP 入口复用
+- `WechatChannelAdapter` / `EmailChannelAdapter` / `AppChannelAdapter` 推迟到 Phase 11
+
+### 10.5 治理层加固
+
+- `RedisIdempotencyStore` — opt-in 持久化（替代 InMemory，30s TTL + replace 不延寿）
+- `AgentRateLimiter` — 工具级 Resilience4j @RateLimiter 包装（默认 100 QPS/工具）

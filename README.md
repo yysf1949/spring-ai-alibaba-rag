@@ -171,6 +171,7 @@ mvn -pl rag-test test -Dtest=RefundRuleEndToEndTest
 | `rag-pipeline` | 编排 (Ingest / Rewrite / Rerank / ContextAssember / QA) | rag-core + rag-redis + rag-embedding |
 | `rag-app` | Spring Boot 装配 (HTTP / MDC / OpenAPI / RFC 7807) | 全栈 |
 | `rag-test` | 集成测试 + §18 退款规则 demo | Testcontainers + testcontainers-redis |
+| `rag-agent` (Phase 10) | Agent Action Layer — 业务工具 (订单/退款/优惠券/物流) + 人工转接 + 评估指标 (3 层架构 + 4 级风险分级 + 治理层扩展) | Spring AI 1.0.9 + Micrometer + Jedis |
 
 ---
 
@@ -272,3 +273,41 @@ scripts/cluster10-evolution-test.sh →  4/4 PASS (版本升级/固定/deprecati
 ## License
 
 Private repository. © 2026 周礼攀.
+
+## 🚀 快速部署
+
+### 前置条件
+- Java 21+
+- Maven 3.9+
+- Docker \& Docker Compose (容器化部署)
+
+### 本地开发 (H2)
+```bash
+mvn spring-boot:run -pl rag-web -Dspring-boot.run.profiles=h2
+```
+
+### Docker 部署
+```bash
+# 1. 复制环境变量
+cp .env.example .env
+# 编辑 .env 填入 API Key
+
+# 2. 启动 (H2 模式)
+docker compose up -d
+
+# 3. 访问
+# - API: http://localhost:8080
+# - Swagger UI: http://localhost:8080/swagger-ui.html
+# - Prometheus: http://localhost:8080/actuator/prometheus
+# - Grafana: http://localhost:3000 (导入 dashboard.json)
+```
+
+### MySQL 模式
+```bash
+docker compose -f docker-compose.yml -f docker-compose.mysql.yml up -d
+```
+
+### Redis 模式
+```bash
+docker compose -f docker-compose.yml -f docker-compose.redis.yml up -d
+```

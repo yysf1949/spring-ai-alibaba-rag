@@ -42,9 +42,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
         "spring.main.web-application-type=servlet",
+        "spring.rag.redis.enabled=false",
         "spring.data.redis.host=nonexistent",
-        "spring.data.redis.port=0"
+        "spring.data.redis.port=0",
+        "spring.ai.openai.api-key=test-key"
 })
+@org.springframework.context.annotation.ComponentScan(
+        excludeFilters = @org.springframework.context.annotation.ComponentScan.Filter(
+                type = org.springframework.context.annotation.FilterType.REGEX,
+                pattern = "io\\.github\\.yysf1949\\.rag\\.agent\\..*"))
 class RagControllerSmokeTest {
 
     @Autowired
@@ -178,7 +184,7 @@ class RagControllerSmokeTest {
         mvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.openapi").value("3.0.1"))
-                .andExpect(jsonPath("$.info.title").value("Spring AI Alibaba RAG API"))
+                .andExpect(jsonPath("$.info.title").value("AI Agent 客服系统 API"))
                 .andExpect(jsonPath("$.info.version").value("0.1.0-SNAPSHOT"))
                 .andExpect(jsonPath("$.components.securitySchemes['bearer-jwt'].name").value("X-Tenant-Id"))
                 .andExpect(jsonPath("$.components.securitySchemes['bearer-jwt'].in").value("header"))
@@ -274,6 +280,11 @@ class RagControllerSmokeTest {
 
             @Override
             public int deprecate(String tenantId, String kbId, long oldKbVersion) {
+                return 0;
+            }
+
+            @Override
+            public int deleteByDocumentId(String tenantId, String kbId, String documentId, long kbVersion) {
                 return 0;
             }
         }

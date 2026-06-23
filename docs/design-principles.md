@@ -303,3 +303,35 @@ docs/
 4. `git ls-remote origin main` — 远端 HEAD 没掉队
 
 **教训**: 多次出现"我以为 push 了"但实际 push 失败,导致下一 cluster 接力时基于旧 HEAD 操作。
+
+---
+
+## 14. 工具风险分级 (Phase 9 新增)
+
+**原则**: 每个 Agent 可调用的工具必须明确标注风险级别（L1-L4），治理层强制门控。
+
+| 级别 | 治理要求 |
+|---|---|
+| L1 | 自动放行 |
+| L2 | idempotencyKey 强制 |
+| L3 | idempotencyKey 强制 + 用户二次确认 |
+| L4 | idempotencyKey 强制 + admin 角色 |
+
+**反模式**: 把"查询"和"修改"做成同一个大工具 — 模型选错参数就把查询变写操作。
+
+参考「路条编程」AI 客服文章 §"查询 ≠ 执行，必须拆开"。
+
+---
+
+## 15. 工具调用幂等性
+
+- **强制**: L2+ 工具必须接收 `idempotencyKey` 参数（RiskGate 校验）
+- **存储**: 默认 InMemory（重启丢），生产建议 Redis（Phase 10 Task 10）
+- **TTL**: 30s 占位，replace 不延寿
+- **测试**: 每个写工具必须有 "重复调用同 token → 同结果" 单测
+
+## 16. 评估指标以端到端为中心
+
+- 不只看"回答准确率"，要测"工具被调用的成功率/平均调用次数/失败原因/回滚次数/用户确认率"
+- 5 个核心指标走 Micrometer → Prometheus（详见 observability.md §11）
+- "端到端问题解决率" 需业务反馈信号，不在 Agent Metrics 范围

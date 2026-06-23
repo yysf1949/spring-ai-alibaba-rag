@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.yysf1949.rag</groupId>
+        <artifactId>spring-ai-alibaba-rag</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>rag-agent</artifactId>
+    <name>rag-agent</name>
+    <description>
+        Agent Action Layer — 把企业后端 Service 改造成 AI Agent 可安全调用的工具集。
+        3 层架构（编排 / 动作 / 治理），对齐「路条编程」AI 客服文章方法论。
+        Tool Calling 走 Spring AI 1.0.9 FunctionCallingCallback，预留 ToolDescriptor 抽象层
+        以兼容未来 2.0 @Tool 升级。
+    </description>
+
+    <dependencies>
+        <!-- 领域模型 + port 接口（leaf 模块） -->
+        <dependency>
+            <groupId>io.github.yysf1949.rag</groupId>
+            <artifactId>rag-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- 编排层需要 Spring AI 1.0.9 的 FunctionCallback/FunctionToolCallback 接口。
+             注：Spring AI 1.0.9 的 BOM 中没有 spring-ai-core（0.x 时代的 artifact），
+             1.0.9 把"core"拆成 spring-ai-commons / spring-ai-model 等多个 jar。
+             FunctionCallback 相关类位于 spring-ai-model jar 下
+             （org.springframework.ai.tool.function.FunctionToolCallback）。
+             plan 文档写的 spring-ai-core 在 1.0.9 BOM 中不存在，无法 resolve。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-model</artifactId>
+        </dependency>
+
+        <!-- Phase 15 Task 1: OpenAI-compatible ChatClient (用于接 DeepSeek).
+             注: spring-ai-openai-spring-boot-starter 在 Spring AI 1.0 GA 后改名为
+             spring-ai-starter-model-openai (旧名只到 1.0.0-M6).
+             spring-ai-bom 1.0.9 管理新名字版本, 无需显式 version.
+             默认 base-url=https://api.openai.com, 通过 spring.ai.openai.base-url=https://api.deepseek.com 切到 DeepSeek.
+             ChatClient.Builder 由 starter 自动配置 (默认 profile 不激活, 需 spring.profiles.active=deepseek). -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+
+        <!-- Spring 上下文（编排层用 Bean 注入；治理层用 @ConditionalOnProperty） -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+        </dependency>
+
+        <!-- Resilience4j：治理层风险门控需要 @Retry / @RateLimiter -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-ratelimiter</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Micrometer 指标 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+
+        <!-- Phase 10: Prometheus 指标导出（4 类 Agent 指标走 /actuator/prometheus） -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Phase 10: Redis 持久化幂等 (生产环境, 重启不丢键) -->
+        <dependency>
+            <groupId>io.github.yysf1949.rag</groupId>
+            <artifactId>rag-redis</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Phase 11 Task 4: H2 JdbcTemplate 持久化后端 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Phase 11 Task 5: MySQL JPA 后端 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- HTTP 接入层 (Task 8) — provided 因为 rag-agent 设计为可在 rag-app 内复用 +
+             单独部署,容器依赖按需注入。provided 模式让 rag-app 启动时自带 Web,但
+             rag-agent 单测可以用 @WebMvcTest 拉起来。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!--
+             Swagger/OpenAPI 注解 (@Tag / @Operation) 用在 AgentController 上。
+             必须显式声明 compile(非 provided)否则 rag-agent 单独编译失败 —
+             springdoc 不在 spring-boot-starter-web BOM 中。
+             rag-app 用 2.6.0,这里保持一致。
+         -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>2.6.0</version>
+        </dependency>
+
+        <!-- 测试 — spring-boot-starter-test 是 @WebMvcTest / @MockBean / MockMvc 的 umbrella -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -63,7 +63,11 @@ public class RedisConnection {
 
         DefaultJedisClientConfig.Builder cfgBuilder = DefaultJedisClientConfig.builder()
                 .timeoutMillis((int) properties.commandTimeoutMs())
-                .clientName("rag-app");
+                .clientName("rag-app")
+                .database(properties.database());
+        if (properties.password() != null && !properties.password().isBlank()) {
+            cfgBuilder.password(properties.password());
+        }
         if (sslSocketFactory != null) {
             cfgBuilder.sslSocketFactory(sslSocketFactory).ssl(true);
             log.info("Redis pool starting in TLS mode");

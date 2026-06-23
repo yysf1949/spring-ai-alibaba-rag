@@ -1,0 +1,12 @@
+# Phase 15 Task 1: DeepSeek OpenAI-compatible ChatClient 配置
+# 注意: api-key 仅通过环境变量注入, 不在此文件或任何 commit 中出现字面值
+# 启用方式: spring.profiles.active=deepseek DEEPSEEK_API_KEY=***
+spring:
+  ai:
+    openai:
+      api-key: ${DEEPSEEK_API_KEY}
+      base-url: https://api.deepseek.com
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.7

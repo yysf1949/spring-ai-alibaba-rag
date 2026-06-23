@@ -19,10 +19,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.client.RestTemplate;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -30,13 +34,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end integration test that exercises the full Spring Boot
- * context against a real Redis Stack instance.
+ * context against a Redis Stack instance managed by Testcontainers.
  *
- * <p>Why an {@code IT} suffix and a system-property gate?
- * The test depends on a Redis Stack server with the RediSearch module
- * loaded. By default {@code mvn verify} skips it ({@code -DrunIT=true}
- * to enable). In CI the gate is wired to a Docker sidecar; locally the
- * developer can point at any reachable redis-stack container.</p>
+ * <p>The test automatically starts a {@code redis/redis-stack-server}
+ * container with the RediSearch module. The {@code @DynamicPropertySource}
+ * injects the container's host/port so the application context connects
+ * to the ephemeral Redis instance — no manual env-var setup needed.</p>
+ *
+ * <p>Why an {@code IT} suffix and a system-property gate? Testcontainers
+ * requires a Docker daemon, and the test may take &gt;30s on first run
+ * (image pull). By default {@code mvn verify} skips it
+ * ({@code -DrunIT=true} to enable).</p>
  *
  * <p>This test is the regression net for D4 (Testcontainers / real-Redis
  * verification). It is intentionally narrow: ingest one document,
@@ -44,24 +52,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @EnabledIfSystemProperty(named = "runIT", matches = "true")
+@Testcontainers
 class RagEndToEndIT {
 
-    /**
-     * Resolve the Redis Stack endpoint from the environment. Defaults
-     * to the local docker-compose instance (see docker-compose.yml).
-     * In CI set {@code RAG_REDIS_HOST}/{@code RAG_REDIS_PORT} to the
-     * sidecar address.
-     */
-    private static final String REDIS_HOST =
-            Optional.ofNullable(System.getenv("RAG_REDIS_HOST")).orElse("localhost");
-    private static final int REDIS_PORT = Integer.parseInt(
-            Optional.ofNullable(System.getenv("RAG_REDIS_PORT")).orElse("6379"));
+    private static final DockerImageName REDIS_IMAGE =
+            DockerImageName.parse("redis/redis-stack-server:latest");
+
+    @Container
+    static GenericContainer<?> redis = new GenericContainer<>(REDIS_IMAGE)
+            .withExposedPorts(6379)
+            .waitingFor(Wait.forLogMessage(".*Ready to accept connections.*\\n", 1));
 
     @DynamicPropertySource
     static void redisProps(DynamicPropertyRegistry r) {
-        r.add("spring.rag.redis.host", () -> REDIS_HOST);
-        r.add("spring.rag.redis.port", () -> REDIS_PORT);
-        // Testcontainers-style clean run: don't depend on dev-profile overrides.
+        r.add("spring.rag.redis.host", redis::getHost);
+        r.add("spring.rag.redis.port", () -> redis.getMappedPort(6379));
         r.add("spring.rag.redis.enabled", () -> "true");
     }
 
@@ -132,6 +137,16 @@ class RagEndToEndIT {
         assertTrue(secondBody.latencyMs() <= firstLatency,
                 "cached response should not be slower than uncached, got "
                         + secondBody.latencyMs() + "ms vs first " + firstLatency + "ms");
+    }
+
+    @Test
+    void containerRedisIsReachable() {
+        // Verify the Testcontainers-managed Redis Stack is running and
+        // the DynamicPropertySource injected the correct host/port.
+        assertNotNull(redis, "Redis container must be started by @Container");
+        assertTrue(redis.isRunning(), "Redis container must be running");
+        assertTrue(redis.getMappedPort(6379) > 0,
+                "Redis container must expose port 6379");
     }
 
     @SuppressWarnings("unchecked")

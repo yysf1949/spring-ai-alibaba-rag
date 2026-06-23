@@ -30,6 +30,12 @@ sdk install java 21.0.2-tem
 sdk install maven
 ```
 
+### Docker
+
+`RagEndToEndIT` uses **Testcontainers** to auto-provision a `redis/redis-stack-server`
+container for integration tests. The test is gated behind `-DrunIT=true`. Ensure
+Docker is running before enabling IT tests:
+
 ---
 
 ## 2. Build & unit test (no external services)
@@ -43,13 +49,14 @@ mvn verify
 Expected output:
 
 ```
-[INFO] Tests run: 124, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
-> The 23 `RedisIndexManagerSmokeTest` cases show as `Skipped` (not failed)
-> when Redis Stack is not running. **Skipped is not failure** — they're
-> integration tests that auto-activate when Redis is reachable.
+> Tests requiring Redis (`LiveTest` suffix) or Testcontainers (`RagEndToEndIT`)
+> are gated behind `@EnabledIfSystemProperty(named = "runIT", ...)` and
+> auto-skip when `-DrunIT=true` is absent. **Skipped is not failure.**
+> 23 `RedisIndexManagerSmokeTest` cases show as `Skipped` when no Redis
+> Stack is running locally.
 
 ### Run a single test class
 
@@ -335,3 +342,178 @@ requirement (spec §2.4 — 6 months).
 - [MULTI_TENANT.md](./MULTI_TENANT.md) — how tenants / permissions / PII
   are enforced, with examples of legal vs illegal request shapes.
 - The design spec — every "spec §X.X" in this file links back here.
+
+---
+
+## 8. Prometheus alerting (Phase 32 T3)
+
+> **Audience**: SRE / on-call. This section wires the 7 RAG alerting
+> rules shipped in `monitoring/prometheus-alerts.yml` into a Prometheus
+> server and Alertmanager.
+
+The pipeline ships **7 alerting rules** covering latency, circuit breaker
+state, cache health, retrieval quality, eval regression, Redis memory, and
+LLM error rate:
+
+| Rule | Severity | Fires when |
+|---|---|---|
+| `RagQaHighP95Latency` | warning | QA P95 > 3s for 5min |
+| `RagCircuitBreakerOpen` | critical | Resilience4j breaker open for >1min |
+| `RagAnswerCacheHitRatioLow` | warning | AnswerCache hit ratio < 30% for 10min |
+| `RagEmptyRetrievalHigh` | warning | Empty retrieval rate > 10% for 5min |
+| `RagEvalRegressionCritical` | critical | Eval Recall@10 < 85% for 5min |
+| `RagRedisMemoryHigh` | warning | Redis memory > 80% of maxmemory for 5min |
+| `RagLlmHighErrorRate` | warning | LLM 4xx/5xx rate > 5% for 5min |
+
+### 8.1 Drop the rules into Prometheus
+
+```bash
+# Option A — copy into the Prometheus rules directory on the server
+sudo cp monitoring/prometheus-alerts.yml /etc/prometheus/rules/rag-alerts.yml
+sudo chown prometheus:prometheus /etc/prometheus/rules/rag-alerts.yml
+
+# Option B — reference from a config-managed path via prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/rules/*.yml
+# Then reload:
+curl -X POST http://prometheus:9090/-/reload    # if --web.enable-lifecycle
+# OR
+sudo systemctl reload prometheus
+```
+
+Verify in the Prometheus UI: **Status → Rules** — you should see all 7
+groups (`rag_high_latency`, `rag_circuit_breaker`, `rag_cache_health`,
+`rag_retrieval_quality`, `rag_eval_regression`, `rag_redis_health`,
+`rag_llm_errors`).
+
+### 8.2 Wire Alertmanager (optional but recommended)
+
+Add to `/etc/prometheus/prometheus.yml`:
+
+```yaml
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager.internal:9093']
+```
+
+Example Alertmanager route (Slack + PagerDuty, 5min group wait):
+
+```yaml
+route:
+  group_by: ['alertname', 'component']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'rag-oncall'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'rag-pagerduty'
+    - match:
+        component: rag-redis
+      receiver: 'rag-sre'
+receivers:
+  - name: 'rag-oncall'
+    slack_configs:
+      - channel: '#rag-alerts'
+        send_resolved: true
+  - name: 'rag-pagerduty'
+    pagerduty_configs:
+      - service_key: '<pd-integration-key>'
+  - name: 'rag-sre'
+    slack_configs:
+      - channel: '#rag-sre'
+```
+
+### 8.3 Validate the rule file locally
+
+Before pushing rule changes, run the bundled validation script:
+
+```bash
+./monitoring/alerts-validation-test.sh
+# → PASS: 7 alerts present and YAML valid
+```
+
+The script checks YAML syntax AND asserts that all 7 expected alert names
+(`RagQaHighP95Latency`, `RagCircuitBreakerOpen`, `RagAnswerCacheHitRatioLow`,
+`RagEmptyRetrievalHigh`, `RagEvalRegressionCritical`, `RagRedisMemoryHigh`,
+`RagLlmHighErrorRate`) are present in the file. Run it from the project
+root; it expects `monitoring/prometheus-alerts.yml` to be present.
+
+CI integration (suggested):
+
+```yaml
+# .github/workflows/alerts-lint.yml
+- name: Validate prometheus alerts
+  run: ./monitoring/alerts-validation-test.sh
+```
+
+### 8.4 Required metrics (cross-reference)
+
+The alerts reference metrics exposed by the pipeline — see
+[METRICS.md](./METRICS.md) for the full list. Minimum surface:
+
+- `rag_qa_latency_ms_seconds_bucket` (histogram, for `RagQaHighP95Latency`)
+- `resilience4j_circuitbreaker_state{name,state}` (gauge, for `RagCircuitBreakerOpen`)
+- `rag_qa_cache_hit_ratio` (gauge, for `RagAnswerCacheHitRatioLow`)
+- `rag_qa_empty_retrieval_total` (counter, for `RagEmptyRetrievalHigh`)
+- `rag_eval_recall_at_10` (gauge, for `RagEvalRegressionCritical`)
+- `redis_used_memory_bytes`, `redis_max_memory_bytes` (gauges, for `RagRedisMemoryHigh`)
+- `rag_llm_errors_total`, `rag_llm_requests_total` (counters, for `RagLlmHighErrorRate`)
+
+If a metric is missing, the corresponding alert will silently never fire —
+check `/actuator/prometheus` first.
+
+---
+
+## 11. Agent Action Layer 故障排查 (Phase 9)
+
+### 11.1 工具找不到 (404)
+
+- 检查 `InMemoryToolRegistry` 启动日志：应看到 `Registered tool [xxx]`
+- 检查 `@ToolSpec.name` 是否唯一 — 重复会 `IllegalStateException`
+
+### 11.2 风险门控拒绝 (403)
+
+- 看 `rag_agent_risk_denied_total` 指标，按 `level` 分桶
+- L2+ 工具必须传 `idempotencyToken`，否则 DENIED
+- L4 必须有 `admin` 角色
+
+### 11.3 幂等回放异常
+
+- 看 `rag_agent_idempotency_replays_total` — 突增说明上游有重试
+- 检查 `IdempotencyStore` 实现（InMemory 单实例；分布式需换 Redis）
+
+### 11.4 审计失败
+
+- 看 `rag.audit.errors.total` gauge
+- 检查 `AuditChannel` appender 配置（90 天 RollingFile）
+
+---
+
+## 12. Agent 转人工故障排查
+
+### 12.1 转人工队列积压
+
+- 查指标：`agent.handoffs` 增长率
+- 查队列：`GET /actuator/agent/handoffs?tenant=...` （Phase 11+ 实现）
+- 应急：手动从 HumanReviewQueue 取 item, 调 HandoffService.complete 标记
+
+### 12.2 工具被限流
+
+- 查指标：`agent.tool.errors{type=RequestNotPermitted}` 增长
+- 查配置：`application.yml` → `resilience4j.ratelimiter.configs.default.limit-for-period`
+- 调大或换工具
+
+### 12.3 幂等键丢失（Redis 故障）
+
+- 查日志：`RedisIdempotencyStore` 异常
+- 自动回退：可以临时把 `agent.idempotency.store=inmemory` 切回 (需要重启)
+- 长期：检查 Redis 连接池 + 哨兵配置
+
+### 12.4 LLM 调工具失败
+
+- 查指标：`agent.tool.errors` 增长率
+- 查日志：`ToolExecutionException` 跟 LLM 调用的关联
+- 应急：暂时关闭问题工具 (从 ToolRegistry exclude)

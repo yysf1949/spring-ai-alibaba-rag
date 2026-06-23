@@ -1,0 +1,13 @@
+# Phase 11 — Agent MySQL 生产存储后端
+# 激活: --spring.profiles.active=mysql
+# 前提: MySQL 实例已运行, agent_order/refund/coupon/ticket 表由 JPA auto-update 创建
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/agent?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: root
+    password: ${MYSQL_ROOT_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false

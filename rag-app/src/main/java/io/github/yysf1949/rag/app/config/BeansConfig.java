@@ -206,6 +206,9 @@ public class BeansConfig {
         public void publish(String tenantId, String kbId, long kbVersion) { /* no-op */ }
         @Override
         public int deprecate(String tenantId, String kbId, long oldKbVersion) { return 0; }
+
+        @Override
+        public int deleteByDocumentId(String tenantId, String kbId, String documentId, long kbVersion) { return 0; }
     }
 
     /** Stub hot-question provider — fixed 3-entry list. */
