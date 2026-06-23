@@ -1,12 +1,31 @@
 stages:
   - build
   - test
+  - eval
   - report
 
 variables:
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
   JAVA_VERSION: "17"
 
+# Phase 33 T3 — Eval CI gate (spec §16 + RUNBOOK §8).
+#
+# Eval is intentionally a SEPARATE stage from `unit-test`:
+#   - unit-test runs on every commit (fast, no external deps)
+#   - eval runs on demand (needs SILICONFLOW_API_KEY + Redis Stack)
+#   - eval requires a real LLM/embedding gateway so it cannot run in the
+#     default GitLab shared runner. Operators trigger it manually from the
+#     CI pipeline UI by setting two CI/CD variables:
+#       SILICONFLOW_API_KEY  (masked+protected)
+#       RAG_REDIS_HOST       (the staging Redis Stack FQDN)
+#
+# The eval stage asserts two hard thresholds and blocks the pipeline
+# when either fails:
+#   - recall@K  >= 0.5    (per fixture) — gate is on the WEAKEST fixture,
+#                                         not the average
+#   - groundRate >= 0.8   (per fixture) — citation coverage
+# If either threshold is missed the pipeline exits non-zero, which
+# blocks the merge button in GitLab.
 build:
   stage: build
   script:
@@ -26,4 +45,43 @@ unit-test:
       - rag-agent/target/surefire-reports/
     expire_in: 7 days
 
-# 后续可加: integration-test, e2e-test, coverage 等 stage
+# Eval gate — manual trigger with the two required protected variables.
+# If either var is missing the @EnabledIfEnvironmentVariable guard inside
+# the test class will skip both EvalSuiteTest and RefundRuleEndToEndTest,
+# and the verify-eval-report.sh script below will fail with a clear error.
+eval-gate:
+  stage: eval
+  when: manual
+  allow_failure: false
+  image: maven:3.9.6-eclipse-temurin-21
+  script:
+    - echo "Running eval suite (Phase 33 T1+T2)"
+    # Run both EvalSuiteTest (10 fixtures) and RefundRuleEndToEndTest (6 scenarios).
+    # LiveTest is excluded because the GitLab runner has no Redis Stack.
+    - |
+      export SILICONFLOW_API_KEY="${SILICONFLOW_API_KEY:-}"
+      export RAG_REDIS_HOST="${RAG_REDIS_HOST:-localhost}"
+      export EVAL_SUITE=1
+      export REFUND_RULE_IT=1
+      mvn -pl rag-test -am test -Peval -Dtest='!*LiveTest' \
+        -DfailIfNoTests=false
+    # Gate enforcement: parse eval-report.json + regression-history snapshot,
+    # fail if any fixture breaches recall=0.5 or grounded=0.8.
+    - bash scripts/verify-eval-report.sh docs/eval/eval-report.json
+  artifacts:
+    when: always
+    paths:
+      - docs/eval/eval-report.json
+      - docs/eval/regression-history/
+    expire_in: 90 days
+    reports:
+      junit:
+        - rag-test/target/surefire-reports/TEST-io.github.yysf1949.rag.eval.EvalSuiteTest.xml
+        - rag-test/target/surefire-reports/TEST-io.github.yysf1949.rag.eval.RefundRuleEndToEndTest.xml
+
+# Summary report stage placeholder — uploads eval artifacts to GitLab Pages (optional).
+# eval-report:
+#   stage: report
+#   when: manual
+#   script:
+#     - echo "Eval report at $CI_PROJECT_URL/-/jobs/$CI_JOB_ID/artifacts/raw/docs/eval/eval-report.json"
