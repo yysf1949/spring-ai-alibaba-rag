@@ -20,11 +20,13 @@ public class JwtAuthentication extends AbstractAuthenticationToken {
                              Collection<? extends GrantedAuthority> authorities) {
         super(authorities);
         this.principal = principal;
-        // setAuthenticated(true) is called by super when authorities are
-        // non-empty; for empty authorities we set it explicitly below.
-        if (authorities == null || authorities.isEmpty()) {
-            setAuthenticated(true);
-        }
+        // JWT has already been verified by JwtTenantFilter — this
+        // Authentication is pre-authenticated regardless of whether
+        // authorities are empty or not. We MUST call setAuthenticated(true)
+        // explicitly: AbstractAuthenticationToken(List<GrantedAuthority>)
+        // stores the authorities but does NOT set authenticated=true.
+        // Without this, every request returns 403 even with valid ROLE_ADMIN.
+        setAuthenticated(true);
     }
 
     @Override public Object getCredentials() { return ""; /* token already verified */ }

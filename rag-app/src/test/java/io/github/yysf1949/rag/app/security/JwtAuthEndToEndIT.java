@@ -50,7 +50,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code rag-redis}; mixing the two would force a docker dep into
  * every unit test run).</p>
  */
-class JwtAuthEndToEndIT {
+public class JwtAuthEndToEndIT {
 
     @SpringBootTest
     @AutoConfigureMockMvc

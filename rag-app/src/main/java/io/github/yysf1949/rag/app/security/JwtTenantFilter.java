@@ -116,8 +116,7 @@ public class JwtTenantFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
-                                    FilterChain chain)
-            throws ServletException, IOException {
+                                    FilterChain chain) throws ServletException, IOException {
 
         // 0. Skip auth for public paths (actuator health, swagger UI,
         // openapi doc) — these never carry a tenant header, and the
@@ -253,10 +252,15 @@ public class JwtTenantFilter extends OncePerRequestFilter {
         JwtPrincipal principal = new JwtPrincipal(claims.subject, claims.tenantId, claims.scopes);
         Authentication authentication =
                 new JwtAuthentication(principal, auths);
-        SecurityContext ctx = SecurityContextHolder.createEmptyContext();
-        ctx.setAuthentication(authentication);
-        SecurityContextHolder.setContext(ctx);
-        log.debug("🔐 T34b installed JWT auth subject={} tenant={} authorities={}",
+        // Use getContext().setAuthentication() instead of creating a new
+        // SecurityContext and calling setContext(). With Spring Security 6.3+,
+        // SecurityContextHolderFilter uses setDeferredContext which wraps the
+        // ThreadLocal — setContext() may create a new context object that the
+        // deferred context supplier doesn't see, while getContext().setAuthentication()
+        // mutates the SAME context object that the deferred supplier holds a
+        // reference to. This fixes the T34b MockAdminControllerTest 403 bug.
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+        log.info("🔐 T34b installed JWT auth subject={} tenant={} authorities={}",
                 claims.subject, claims.tenantId, auths);
         if (claims.tenantId != null) MDC.put("jwt.tenant", claims.tenantId);
         if (claims.subject != null) MDC.put("jwt.sub", claims.subject);
