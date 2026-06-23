@@ -5,6 +5,8 @@ import io.github.yysf1949.rag.agent.exception.IdempotencyConflictException;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
 import io.github.yysf1949.rag.agent.governance.TenantRateLimitedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -25,6 +27,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class AgentExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(AgentExceptionHandler.class);
 
     @ExceptionHandler(ToolNotFoundException.class)
     public ProblemDetail handleToolNotFound(ToolNotFoundException e) {
@@ -62,5 +66,17 @@ public class AgentExceptionHandler {
         // 注：通常 DefaultAgentLoop 已 catch 并转为 HANDOFF_REQUIRED outcome（不进这里）；
         // 此映射兜底"直接调用 Tool / 测试场景"或 future HttpChannelAdapter 跳过编排层的边缘 case
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
+    }
+
+    /**
+     * Phase 40 T2: 反馈导出参数错误 (时间反转 / format 不支持 / 时间格式非法)
+     * → 500 Internal Server Error. 故意走 500 而非 400, 因为这是 Admin 通道
+     * 的服务端"配置/脚本"失误, 与 FeedbackValidationException (用户提交反馈) 路径隔离,
+     * 避免污染全局 IllegalArgumentException 的 4xx 行为.
+     */
+    @ExceptionHandler(FeedbackExportException.class)
+    public ProblemDetail handleFeedbackExport(FeedbackExportException e) {
+        log.warn("Feedback export rejected: {}", e.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
     }
 }

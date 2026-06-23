@@ -125,4 +125,48 @@ class H2FeedbackRepositoryTest {
                 null, null, null, null, "api", null, 2L));
         assertThat(repo.countByTenant("tenant-count")).isEqualTo(before + 2);
     }
+
+    // ---- Phase 40 T2: findByTenantRange ----
+
+    @Test
+    void findByTenantRangeWithBothBounds() {
+        // 用 unique tenant 避免与其它测试共享 static @BeforeAll H2 实例.
+        repo.save(new FeedbackRecord("FB-r1", "t2r1", "u", "c",
+                null, Thumb.UP, null, null, "api", null, 1000L));
+        repo.save(new FeedbackRecord("FB-r2", "t2r1", "u", "c",
+                null, Thumb.UP, null, null, "api", null, 2000L));
+        repo.save(new FeedbackRecord("FB-r3", "t2r1", "u", "c",
+                null, Thumb.UP, null, null, "api", null, 3000L));
+
+        var found = repo.findByTenantRange("t2r1", 1500L, 2500L, 100);
+        assertThat(found).extracting(FeedbackRecord::feedbackId)
+                .containsExactly("FB-r2");
+    }
+
+    @Test
+    void findByTenantRangeNoBoundsReturnsAllSortedAsc() {
+        repo.save(new FeedbackRecord("FB-n1", "t2n1", "u", "c",
+                null, null, null, null, "api", null, 3000L));
+        repo.save(new FeedbackRecord("FB-n2", "t2n1", "u", "c",
+                null, null, null, null, "api", null, 1000L));
+        repo.save(new FeedbackRecord("FB-n3", "t2n1", "u", "c",
+                null, null, null, null, "api", null, 2000L));
+
+        var found = repo.findByTenantRange("t2n1", null, null, 100);
+        assertThat(found).extracting(FeedbackRecord::feedbackId)
+                .containsExactly("FB-n2", "FB-n3", "FB-n1");
+    }
+
+    @Test
+    void findByTenantRangeRespectsLimit() {
+        // t-lim 已经被之前测试占用 — 改用 t2lim
+        for (int i = 0; i < 10; i++) {
+            repo.save(new FeedbackRecord("FB-L" + i, "t2lim", "u", "c",
+                    null, null, null, null, "api", null, 5000L + i));
+        }
+        var found = repo.findByTenantRange("t2lim", null, null, 4);
+        assertThat(found).hasSize(4);
+        assertThat(found.get(0).feedbackId()).isEqualTo("FB-L0");
+        assertThat(found.get(3).feedbackId()).isEqualTo("FB-L3");
+    }
 }

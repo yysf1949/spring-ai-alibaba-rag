@@ -95,6 +95,27 @@ public class H2FeedbackRepository implements FeedbackPort {
         return n == null ? 0L : n;
     }
 
+    @Override
+    public List<FeedbackRecord> findByTenantRange(String tenantId, Long fromMs, Long toMs, int limit) {
+        // Phase 40 T2: JSONL 导出专用 — 时间范围 + tenant 隔离 + 时间升序.
+        // SQL 用 ? 占位避免注入; from/to 任一为 null 时跳过该条件.
+        StringBuilder sql = new StringBuilder(
+                "SELECT * FROM agent_feedback WHERE tenant_id = ?");
+        List<Object> args = new java.util.ArrayList<>();
+        args.add(tenantId);
+        if (fromMs != null) {
+            sql.append(" AND created_at >= ?");
+            args.add(fromMs);
+        }
+        if (toMs != null) {
+            sql.append(" AND created_at <= ?");
+            args.add(toMs);
+        }
+        sql.append(" ORDER BY created_at ASC LIMIT ?");
+        args.add(limit);
+        return jdbc.query(sql.toString(), MAPPER, args.toArray());
+    }
+
     private static Thumb parseThumb(String s) {
         if (s == null || s.isBlank()) return null;
         return Thumb.valueOf(s);
