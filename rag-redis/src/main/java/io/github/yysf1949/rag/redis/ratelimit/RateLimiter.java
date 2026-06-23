@@ -1,4 +1,4 @@
-package io.github.yysf1949.rag.app.security;
+package io.github.yysf1949.rag.redis.ratelimit;
 
 import io.github.yysf1949.rag.redis.config.RedisConnection;
 import org.slf4j.Logger;
@@ -54,18 +54,24 @@ public class RateLimiter {
      * Spring constructor — reads the limit / window from
      * {@code rag.security.rate-limit.*} so the values are tunable via
      * env vars ({@code RATE_LIMIT_REQUESTS}, {@code RATE_LIMIT_WINDOW_SECONDS})
-     * without a code change.
+     * without a code change. {@code RedisConnection} is
+     * {@code required=false} so the bean can be created in dev / smoke
+     * tests that disable {@code spring.rag.redis.enabled}; the limiter
+     * then degrades to fail-open.
      */
+    @org.springframework.beans.factory.annotation.Autowired
     public RateLimiter(
-            RedisConnection redis,
+            @org.springframework.beans.factory.annotation.Autowired(
+                    required = false) RedisConnection redis,
             @Value("${rag.security.rate-limit.requests-per-window:60}") int requestsPerWindow,
             @Value("${rag.security.rate-limit.window-seconds:60}") int windowSeconds) {
         this.redis = redis;
         this.requestsPerWindow = requestsPerWindow;
         this.windowMs = windowSeconds * 1000L;
         this.script = loadScript();
-        log.info("🚦 RateLimiter active — {} req / {} s window (per tenant)",
-                requestsPerWindow, windowSeconds);
+        log.info("🚦 RateLimiter active — {} req / {} s window (per tenant){}",
+                requestsPerWindow, windowSeconds,
+                redis == null ? " [DEGRADED: no RedisConnection bean, fail-open]" : "");
     }
 
     /**
@@ -102,6 +108,13 @@ public class RateLimiter {
             // bucketed together so the limiter still applies but no
             // single caller can dominate.
             tenant = "__anonymous__";
+        }
+        if (redis == null) {
+            // Limiter was constructed without a RedisConnection (dev /
+            // smoke tests that disable spring.rag.redis.enabled). Fall
+            // through to a permissive decision — better to admit
+            // traffic than to 500 every request when Redis is absent.
+            return new Decision(true, 0, 0);
         }
         String key = "rag:ratelimit:tenant:" + tenant;
         long now = System.currentTimeMillis();

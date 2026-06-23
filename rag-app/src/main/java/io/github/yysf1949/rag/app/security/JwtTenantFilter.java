@@ -1,5 +1,7 @@
 package io.github.yysf1949.rag.app.security;
 
+import io.github.yysf1949.rag.redis.ratelimit.RateLimiter;
+
 import io.github.yysf1949.rag.app.config.MdcTenantFilter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -81,6 +83,7 @@ public class JwtTenantFilter extends OncePerRequestFilter {
     private final boolean devMode;
     private final RateLimiter rateLimiter;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public JwtTenantFilter(
             @Value("${rag.security.jwt.secret:}") String jwtSecret,
             @Value("${rag.security.jwt.enabled:false}") boolean jwtEnabled,
@@ -115,6 +118,27 @@ public class JwtTenantFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain chain)
             throws ServletException, IOException {
+
+        // 0. Skip auth for public paths (actuator health, swagger UI,
+        // openapi doc) — these never carry a tenant header, and the
+        // Spring Security chain has already marked them permitAll().
+        // We must let them through BEFORE the JWT / dev-mode checks
+        // fire, otherwise Swagger dies in dev mode.
+        String path = request.getRequestURI();
+        if (path.startsWith("/actuator/")
+                || path.startsWith("/swagger-ui")
+                || path.equals("/swagger-ui.html")
+                || path.startsWith("/v3/api-docs")
+                || path.equals("/error")
+                // The mock JWT issuer is the one endpoint a client
+                // is allowed to call WITHOUT a JWT — it's literally
+                // the way you get one. Letting it through the
+                // gateway is the whole point.
+                || path.equals("/api/auth/mock-token")
+                || path.startsWith("/api/auth/mock-token/")) {
+            chain.doFilter(request, response);
+            return;
+        }
 
         // 1. Try JWT first.
         String auth = request.getHeader(HEADER_AUTH);
@@ -156,6 +180,14 @@ public class JwtTenantFilter extends OncePerRequestFilter {
         }
 
         // 2. Dev-mode fallback — accept X-Tenant-Id without JWT.
+        //    We deliberately DO NOT short-circuit 401 ourselves when
+        //    X-Tenant-Id is missing in dev mode: the downstream
+        //    controller already returns a problem+json 401 for that
+        //    case (RagExceptionHandler), and overriding it from a
+        //    filter would break the response contract that the smoke
+        //    tests assert. We just stamp a SecurityContext so any
+        //    SecurityContextHolder.getContext() call downstream has
+        //    something to chew on, and let the controller do its job.
         if (devMode) {
             String tenant = request.getHeader(MdcTenantFilter.HEADER_TENANT);
             if (tenant != null && !tenant.isBlank()) {
@@ -173,12 +205,27 @@ public class JwtTenantFilter extends OncePerRequestFilter {
                 }
                 return;
             }
+            // dev mode, no X-Tenant-Id — fall through to the
+            // controller, which will return the typed 401
+            // problem+json response.
         }
 
-        // 3. No JWT, no dev fallback → 401.
-        reject(response, 401, "UNAUTHORIZED",
-                "Missing Authorization: Bearer ... header. "
-                        + (devMode ? "Dev mode also requires X-Tenant-Id." : ""));
+        // 3. JWT mode (no dev fallback) without a Bearer token: 401.
+        if (!devMode) {
+            reject(response, 401, "UNAUTHORIZED",
+                    "Missing Authorization: Bearer *** header.");
+            return;
+        }
+
+        // 4. dev mode, no JWT, no X-Tenant-Id → forward to the
+        //    controller. RagExceptionHandler will emit the standard
+        //    problem+json 401.
+        installAnonymousAuth("anonymous");
+        try {
+            chain.doFilter(request, response);
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
     }
 
     /**
@@ -245,8 +292,16 @@ public class JwtTenantFilter extends OncePerRequestFilter {
             throws IOException {
         response.setStatus(status);
         response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
         response.getWriter().write(
                 "{\"error\":\"" + code + "\",\"message\":\"" + escape(message) + "\"}");
+        // Force the response to commit so downstream filters /
+        // controllers (notably Spring MVC's DispatcherServlet) see
+        // isCommitted()==true and short-circuit. Without this, an
+        // upstream filter reject + a downstream controller
+        // invocation triggers "getWriter() has already been called"
+        // because both try to write the response body.
+        response.flushBuffer();
     }
 
     private static String escape(String s) {

@@ -1,9 +1,13 @@
 package io.github.yysf1949.rag.app.security;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -89,7 +93,7 @@ public final class JwtTokenParser {
         }
 
         // 3. Parse claims (we only need tenantId, sub, scope, exp).
-        Map<String, String> claims = MiniJson.parseObject(
+        Map<String, String> claims = readStringClaims(
                 new String(payloadJson, StandardCharsets.UTF_8));
         Claims c = new Claims();
         c.tenantId = claims.get("tenantId");
@@ -133,129 +137,47 @@ public final class JwtTokenParser {
         public final java.util.Set<String> scopes = new java.util.LinkedHashSet<>();
     }
 
+    /**
+     * Read a flat JWT claim object using Jackson. Only string-valued
+     * fields (and the standard numeric {@code exp} / {@code iat} claims)
+     * are surfaced — arrays and nested objects are skipped, since the
+     * HS256 gateway layer does not need them. The parser is a thin
+     * Jackson wrapper: it doesn't pull in a new dependency because
+     * rag-app already includes Jackson through
+     * spring-boot-starter-web.
+     */
+    private static Map<String, String> readStringClaims(String json) {
+        try {
+            JsonNode root = new ObjectMapper().readTree(json);
+            if (root == null || !root.isObject()) {
+                throw new JwtParseException("expected JSON object");
+            }
+            Map<String, String> out = new LinkedHashMap<>();
+            Iterator<Map.Entry<String, JsonNode>> it = root.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                JsonNode v = e.getValue();
+                if (v == null || v.isNull()) continue;
+                if (v.isTextual()) {
+                    out.put(e.getKey(), v.asText());
+                } else if (v.isNumber()) {
+                    // Keep exp / iat as text so Claims.expirationEpoch
+                    // stays a String (callers can Long.parseLong it).
+                    out.put(e.getKey(), v.asText());
+                }
+                // arrays / objects are silently skipped — not used.
+            }
+            return out;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new JwtParseException("malformed JSON: " + e.getOriginalMessage(), e);
+        } catch (java.io.IOException e) {
+            throw new JwtParseException("JSON read failed: " + e.getMessage(), e);
+        }
+    }
+
     /** Thrown on any parse/verification failure — the filter maps this to 401. */
     public static final class JwtParseException extends RuntimeException {
         public JwtParseException(String message) { super(message); }
         public JwtParseException(String message, Throwable cause) { super(message, cause); }
-    }
-
-    /**
-     * Minimal JSON object parser — just enough to read string-valued
-     * fields from a flat JWT payload. Avoids pulling a JSON dep for one
-     * caller. NOT a general-purpose parser; no nested objects, no arrays.
-     */
-    static final class MiniJson {
-        static Map<String, String> parseObject(String s) {
-            if (s == null) throw new JwtParseException("JSON is null");
-            int i = skipWs(s, 0);
-            if (i >= s.length() || s.charAt(i) != '{') {
-                throw new JwtParseException("expected '{', got '" + safe(s, i) + "'");
-            }
-            i = skipWs(s, i + 1);
-            Map<String, String> out = new LinkedHashMap<>();
-            if (i < s.length() && s.charAt(i) == '}') return out;
-            while (i < s.length()) {
-                i = skipWs(s, i);
-                if (i >= s.length() || s.charAt(i) != '"') {
-                    throw new JwtParseException("expected string key at " + i);
-                }
-                int keyStart = ++i;
-                int keyEnd = findStringEnd(s, keyStart);
-                String key = unescape(s.substring(keyStart, keyEnd));
-                i = skipWs(s, keyEnd + 1);
-                if (i >= s.length() || s.charAt(i) != ':') {
-                    throw new JwtParseException("expected ':' at " + i);
-                }
-                i = skipWs(s, i + 1);
-                if (i >= s.length() || s.charAt(i) != '"') {
-                    // we only support string values; skip non-strings
-                    // (numbers, booleans) so a JWT with `exp: 12345`
-                    // doesn't fail to parse.
-                    int end = skipValue(s, i);
-                    if (end < 0) throw new JwtParseException("unterminated value at " + i);
-                    i = skipWs(s, end);
-                } else {
-                    int valStart = ++i;
-                    int valEnd = findStringEnd(s, valStart);
-                    out.put(key, unescape(s.substring(valStart, valEnd)));
-                    i = skipWs(s, valEnd + 1);
-                }
-                if (i < s.length() && s.charAt(i) == ',') {
-                    i++;
-                    continue;
-                }
-                if (i < s.length() && s.charAt(i) == '}') {
-                    return out;
-                }
-                throw new JwtParseException("expected ',' or '}' at " + i);
-            }
-            throw new JwtParseException("unterminated JSON object");
-        }
-
-        private static int skipWs(String s, int i) {
-            while (i < s.length() && Character.isWhitespace(s.charAt(i))) i++;
-            return i;
-        }
-
-        private static int findStringEnd(String s, int start) {
-            for (int i = start; i < s.length(); i++) {
-                char c = s.charAt(i);
-                if (c == '\\' && i + 1 < s.length()) { i++; continue; }
-                if (c == '"') return i;
-            }
-            throw new JwtParseException("unterminated string starting at " + start);
-        }
-
-        private static int skipValue(String s, int i) {
-            int depth = 0;
-            boolean inStr = false;
-            for (; i < s.length(); i++) {
-                char c = s.charAt(i);
-                if (inStr) {
-                    if (c == '\\' && i + 1 < s.length()) { i++; continue; }
-                    if (c == '"') inStr = false;
-                    continue;
-                }
-                if (c == '"') { inStr = true; continue; }
-                if (c == '{' || c == '[') depth++;
-                if (c == '}' || c == ']') depth--;
-                if (depth == 0 && (c == ',' || c == '}' || c == ']')) return i;
-            }
-            return -1;
-        }
-
-        private static String unescape(String s) {
-            StringBuilder out = new StringBuilder(s.length());
-            for (int i = 0; i < s.length(); i++) {
-                char c = s.charAt(i);
-                if (c == '\\' && i + 1 < s.length()) {
-                    char n = s.charAt(++i);
-                    switch (n) {
-                        case 'n' -> out.append('\n');
-                        case 'r' -> out.append('\r');
-                        case 't' -> out.append('\t');
-                        case '"' -> out.append('"');
-                        case '\\' -> out.append('\\');
-                        case '/' -> out.append('/');
-                        case 'u' -> {
-                            if (i + 4 < s.length()) {
-                                out.append((char) Integer.parseInt(
-                                        s.substring(i + 1, i + 5), 16));
-                                i += 4;
-                            }
-                        }
-                        default -> out.append(n);
-                    }
-                } else {
-                    out.append(c);
-                }
-            }
-            return out.toString();
-        }
-
-        private static String safe(String s, int i) {
-            if (i >= s.length()) return "<eof>";
-            return String.valueOf(s.charAt(i));
-        }
     }
 }

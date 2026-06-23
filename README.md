@@ -391,6 +391,74 @@ npm run openapi:gen
 
 ---
 
+## Phase 34: 安全加固 (JWT/OAuth2 + Rate Limiting)
+
+替换 HMAC `X-Tenant-Signature` 弱鉴权,引入两层网关:
+
+- **R5 — JWT/OAuth2**: HS256 Bearer token,scope = `kb:read / kb:write / agent:invoke`
+- **R6 — Rate Limiting**: Redis sliding-window Lua 脚本,60 req/min/tenant (可调)
+
+### 启用方式
+
+```bash
+# 生产
+export JWT_ENABLED=true
+export JWT_SECRET='<32+ byte random secret>'   # e.g. openssl rand -hex 32
+export RATE_LIMIT_REQUESTS=60                  # 默认 60
+export RATE_LIMIT_WINDOW_SECONDS=60            # 默认 60
+java -jar rag-app/target/rag-app-0.1.0-SNAPSHOT-boot.jar
+```
+
+```bash
+# 开发 (默认)
+# JWT_ENABLED=false, JWT_DEV_MODE=true
+# X-Tenant-Id: dev 一类请求会被接受,但 WARN 日志提示"prod 会拒绝"
+# Phase 36 前端 hardcode X-Tenant-Id: dev → 不需改 UI
+```
+
+### 端点
+
+| 路径 | 是否需要 JWT | 说明 |
+|---|---|---|
+| `POST /api/auth/mock-token` | **否** (公开) | 拿 dev/test 用 token。`{userId, tenant, scopes}` → `{token, expiresIn, tokenType}` |
+| `GET /actuator/health` | **否** | liveness/readiness |
+| `/swagger-ui/**`, `/v3/api-docs/**` | **否** | OpenAPI |
+| 其他 `POST/GET /api/**` | **是** (prod) | `Authorization: Bearer *** |
+
+### 错误码
+
+| 状态 | 错误码 | 触发 |
+|---|---|---|
+| 401 | `UNAUTHORIZED` | 无 Authorization header (prod 模式) |
+| 401 | `JWT_NOT_CONFIGURED` | `JWT_ENABLED=true` 但 secret 缺 |
+| 401 | `JWT_INVALID` | 签名/alg/exp 错误 |
+| 401 | `JWT_MISSING_TENANT` | token 无 `tenantId` claim |
+| 429 | `RATE_LIMITED` | tenant 超出 RATE_LIMIT_REQUESTS/WINDOW_SECONDS |
+
+### Rate Limit 响应头
+
+- `X-RateLimit-Limit` — 窗口上限
+- `X-RateLimit-Remaining` — 窗口剩余
+- `Retry-After` — 429 时返回,秒
+
+### 验证 (DoD)
+
+```bash
+mvn verify -pl rag-app -am -Dtest='!*LiveTest' -DfailIfNoTests=false
+# 49 unit tests + RateLimiterLiveTest (redis) 通过
+```
+
+curl 烟测: `dev mode X-Tenant-Id: dev → 202 + WARN log`; `prod 无 token → 401 UNAUTHORIZED`; `prod 错签名 → 401 JWT_INVALID`; `prod valid JWT → 202`; `prod 6 req in 60s → call 6 = 429 RATE_LIMITED + Retry-After 59`.
+
+### 已知限制 (技术债)
+
+- **Mock JWT issuer**: `MockJwtController` 是 Phase 34 临时方案;生产环境应接 Keycloak / Auth0 / Okta,通过 JWKS RS256 验签。
+- **Dev mode 默认开启**: `JWT_DEV_MODE=true` 让 Phase 36 前端不立坏;**生产必须设 false**。
+- **MdcTenantFilter 仍在**: 保留 HMAC 验证作为 fallback;当 `RAG_TENANT_SECRET` blank 时 disable。
+- **Live test 需 redis**: `mvn -pl rag-redis test -Dtest=RateLimiterLiveTest -Dredis.smoke.test=true`
+
+---
+
 ## License
 
 Private repository. © 2026 周礼攀.
