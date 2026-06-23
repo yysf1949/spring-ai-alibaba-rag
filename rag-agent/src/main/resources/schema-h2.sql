@@ -56,3 +56,26 @@ CREATE INDEX IF NOT EXISTS idx_agent_feedback_tenant_created
     ON agent_feedback (tenant_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_feedback_tenant_conv
     ON agent_feedback (tenant_id, conversation_id);
+
+-- Phase 40 T3: agent_tenant_quota — Tenant 配额元数据 (R11)
+CREATE TABLE IF NOT EXISTS agent_tenant_quota (
+    tenant_id            VARCHAR(64)   NOT NULL PRIMARY KEY,
+    tier                 VARCHAR(16)   NOT NULL DEFAULT 'FREE',
+    monthly_call_limit   BIGINT        NOT NULL DEFAULT 1000,
+    monthly_token_limit  BIGINT        NOT NULL DEFAULT 100000,
+    effective_from       BIGINT        NOT NULL,
+    effective_to         BIGINT,
+    downgraded_at        BIGINT,
+    original_tier        VARCHAR(16)       -- 降级前原 tier, 降级清除时恢复
+);
+
+-- Phase 40 T3: agent_usage_counter — 月度用量计数 (calls + tokens)
+CREATE TABLE IF NOT EXISTS agent_usage_counter (
+    tenant_id      VARCHAR(64)  NOT NULL,
+    month_key      VARCHAR(7)   NOT NULL,    -- YYYY-MM (UTC)
+    resource       VARCHAR(16)  NOT NULL,    -- "calls" / "tokens"
+    counter_value  BIGINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (tenant_id, month_key, resource)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_usage_counter_month
+    ON agent_usage_counter (month_key);

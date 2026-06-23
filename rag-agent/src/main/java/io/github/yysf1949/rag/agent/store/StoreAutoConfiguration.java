@@ -28,6 +28,9 @@ import jakarta.annotation.PostConstruct;
  *   <li>{@code agent_user_address} — 用户地址</li>
  *   <li>{@code agent_satisfaction_survey} — 满意度调查</li>
  *   <li>{@code agent_after_service_audit} — 售后善后审计</li>
+ *   <li>{@code agent_feedback} — Phase 40 T1 用户反馈</li>
+ *   <li>{@code agent_tenant_quota} — Phase 40 T3 租户配额 (R11)</li>
+ *   <li>{@code agent_usage_counter} — Phase 40 T3 月度用量计数 (calls/tokens)</li>
  * </ul>
  *
  * <h2>为什么不用 Flyway/Liquibase</h2>
@@ -193,7 +196,7 @@ public class StoreAutoConfiguration {
                 )
                 """);
 
-        // 10. agent_feedback — 用户反馈 (Phase 40 T1, R10 Active Learning)
+        // 10. agent_feedback — Phase 40 T1 用户反馈 (R10 Active Learning)
         jdbc.update("""
                 CREATE TABLE IF NOT EXISTS agent_feedback (
                     feedback_id     VARCHAR(64)   NOT NULL PRIMARY KEY,
@@ -214,6 +217,33 @@ public class StoreAutoConfiguration {
         jdbc.update("CREATE INDEX IF NOT EXISTS idx_agent_feedback_tenant_conv "
                 + "ON agent_feedback (tenant_id, conversation_id)");
 
-        log.info("StoreAutoConfiguration.ensureAllSchema — all 10 tables ready.");
+        // 11. agent_tenant_quota — Phase 40 T3 Tenant 配额 (R11 商业化)
+        jdbc.update("""
+                CREATE TABLE IF NOT EXISTS agent_tenant_quota (
+                    tenant_id            VARCHAR(64)  PRIMARY KEY,
+                    tier                 VARCHAR(16)  NOT NULL DEFAULT 'FREE',
+                    monthly_call_limit   BIGINT       NOT NULL DEFAULT 1000,
+                    monthly_token_limit  BIGINT       NOT NULL DEFAULT 100000,
+                    effective_from       BIGINT       NOT NULL,
+                    effective_to         BIGINT,
+                    downgraded_at        BIGINT,
+                    original_tier        VARCHAR(16)
+                )
+                """);
+
+        // 12. agent_usage_counter — Phase 40 T3 月度用量计数
+        jdbc.update("""
+                CREATE TABLE IF NOT EXISTS agent_usage_counter (
+                    tenant_id      VARCHAR(64)  NOT NULL,
+                    month_key      VARCHAR(7)   NOT NULL,
+                    resource       VARCHAR(16)  NOT NULL,
+                    counter_value  BIGINT       NOT NULL DEFAULT 0,
+                    PRIMARY KEY (tenant_id, month_key, resource)
+                )
+                """);
+        jdbc.update("CREATE INDEX IF NOT EXISTS idx_agent_usage_counter_month "
+                + "ON agent_usage_counter (month_key)");
+
+        log.info("StoreAutoConfiguration.ensureAllSchema — all 12 tables ready.");
     }
 }

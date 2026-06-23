@@ -5,6 +5,7 @@ import io.github.yysf1949.rag.agent.exception.IdempotencyConflictException;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
 import io.github.yysf1949.rag.agent.governance.TenantRateLimitedException;
+import io.github.yysf1949.rag.agent.quota.TenantQuotaExceededException;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -45,6 +46,23 @@ public class AgentExceptionHandler {
     public ProblemDetail handleTenantRateLimited(TenantRateLimitedException e) {
         // Phase 13a M3: 租户级 QPS 超限 → 429 Too Many Requests
         return ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+    }
+
+    /**
+     * Phase 40 T3: 月度配额超限 → 429 Too Many Requests.
+     * 与 TenantRateLimitedException 走同一 HTTP 状态, 但 ProblemDetail body
+     * 区分清楚 (QPS vs 月度) 便于调用方识别.
+     */
+    @ExceptionHandler(TenantQuotaExceededException.class)
+    public ProblemDetail handleTenantQuotaExceeded(TenantQuotaExceededException e) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+        pd.setProperty("tenantId", e.getTenantId());
+        pd.setProperty("resource", e.getResource());
+        pd.setProperty("currentUsage", e.getCurrentUsage());
+        pd.setProperty("limit", e.getLimit());
+        pd.setProperty("monthKey", e.getMonthKey());
+        return pd;
     }
 
     /**
