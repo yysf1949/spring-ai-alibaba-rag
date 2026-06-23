@@ -214,6 +214,28 @@ public class StoreAutoConfiguration {
         jdbc.update("CREATE INDEX IF NOT EXISTS idx_agent_feedback_tenant_conv "
                 + "ON agent_feedback (tenant_id, conversation_id)");
 
-        log.info("StoreAutoConfiguration.ensureAllSchema — all 10 tables ready.");
+                // 11. agent_invoice — 支付发票 (Phase 40 T4, R11 商业化收口)
+        jdbc.update("""
+                CREATE TABLE IF NOT EXISTS agent_invoice (
+                    invoice_id      VARCHAR(64)   NOT NULL PRIMARY KEY,
+                    tenant_id       VARCHAR(64)   NOT NULL,
+                    amount_cents    BIGINT        NOT NULL,
+                    currency        VARCHAR(8)    NOT NULL,
+                    status          VARCHAR(16)   NOT NULL,
+                    paid_at         BIGINT,
+                    payment_method  VARCHAR(16)   NOT NULL,
+                    external_ref    VARCHAR(128),
+                    description     VARCHAR(512),
+                    created_at      BIGINT        NOT NULL,
+                    refunded_at     BIGINT,
+                    refund_reason   VARCHAR(512)
+                )
+                """);
+        jdbc.update("CREATE INDEX IF NOT EXISTS idx_agent_invoice_tenant_created "
+                + "ON agent_invoice (tenant_id, created_at DESC)");
+        jdbc.update("CREATE INDEX IF NOT EXISTS idx_agent_invoice_external_ref "
+                + "ON agent_invoice (external_ref)");
+
+        log.info("StoreAutoConfiguration.ensureAllSchema — all 11 tables ready.");
     }
 }

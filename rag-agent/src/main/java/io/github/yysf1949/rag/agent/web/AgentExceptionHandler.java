@@ -5,6 +5,8 @@ import io.github.yysf1949.rag.agent.exception.IdempotencyConflictException;
 import io.github.yysf1949.rag.agent.exception.ToolNotFoundException;
 import io.github.yysf1949.rag.agent.exception.ToolRiskDeniedException;
 import io.github.yysf1949.rag.agent.governance.TenantRateLimitedException;
+import io.github.yysf1949.rag.agent.payment.exception.InvoiceNotFoundException;
+import io.github.yysf1949.rag.agent.payment.exception.PaymentValidationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
@@ -78,5 +80,23 @@ public class AgentExceptionHandler {
     public ProblemDetail handleFeedbackExport(FeedbackExportException e) {
         log.warn("Feedback export rejected: {}", e.getMessage());
         return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
+    }
+
+    /**
+     * Phase 40 T4: 支付参数非法 (webhook 签名错 / amount 太小) → 400 Bad Request.
+     * 独立异常类型, 不影响其它 IllegalArgumentException 行为.
+     */
+    @ExceptionHandler(PaymentValidationException.class)
+    public ProblemDetail handlePaymentValidation(PaymentValidationException e) {
+        log.warn("Payment validation rejected: {}", e.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    /**
+     * Phase 40 T4: invoice 不存在或跨租户访问 → 404 Not Found.
+     */
+    @ExceptionHandler(InvoiceNotFoundException.class)
+    public ProblemDetail handleInvoiceNotFound(InvoiceNotFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
     }
 }
