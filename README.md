@@ -371,6 +371,26 @@ npm run openapi:gen
 
 ---
 
+## Phase 36-T3: /gradual (灰度发布) + /rate-limit (限流展示)
+
+新增两个 UI 页面（Phase 36-T3 范围, 无后端改动）：
+
+| Route | Page | Source | Description |
+|---|---|---|---|
+| `/gradual` | `GradualPage.tsx` | 复用 `versionsApi.listVersions()` (T2c) + 前端 stub | 查 KB 版本列表, "设为活跃" / "回滚" 按钮。后端无 POST 端点, 按钮模拟成功 |
+| `/rate-limit` | `RateLimitPage.tsx` | 前端 `const` 数组 | 展示 3 个 tenant 的 mock 限流状态 (dev/staging/prod), 含 usage % 条形图 |
+
+### 已知限制
+- **stub**: /gradual 的 activate/rollback 无后端 POST 端点 (Phase 36 scope 不碰 backend)
+- **stub**: /rate-limit 的数据是前端静态 mock, 无后端 GET /api/admin/rate-limits 端点
+- **无 JWT**: 页面公开可访问 (Phase 34 范围)
+- **无 E2E**: Playwright / snapshot 不在 T3 范围
+
+### 下一步
+- Phase 34 (JWT + 真实限流): 替换 stub mock 为真实后端端点 + 注入鉴权
+
+---
+
 ## License
 
 Private repository. © 2026 周礼攀.

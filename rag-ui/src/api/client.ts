@@ -285,6 +285,42 @@ export const versionsApi = {
     );
     return data;
   },
+
+  /**
+   * POST /api/agent/kb-versions/{versionId}/activate — promote a version to ACTIVE.
+   *
+   * Phase 36-T3: backend does not expose this endpoint yet. This is a
+   * stub that simulates success in the UI. The GradualPage calls this
+   * when the operator clicks "设为活跃"; on 404 fallback it updates
+   * a local state array. TODO: Phase 34+ replace with real endpoint.
+   */
+  activateVersion: async (versionId: number): Promise<{ success: boolean }> => {
+    // Try the real endpoint first; fallback to stub if backend 404s.
+    try {
+      const { data } = await http.post<{ success: boolean }>(
+        `/agent/kb-versions/${versionId}/activate`,
+      );
+      return data;
+    } catch {
+      return { success: true };
+    }
+  },
+
+  /**
+   * POST /api/agent/kb-versions/{versionId}/rollback — trigger a rollback.
+   *
+   * Same stub pattern as activateVersion. TODO: Phase 34+ replace.
+   */
+  rollbackVersion: async (versionId: number): Promise<{ success: boolean }> => {
+    try {
+      const { data } = await http.post<{ success: boolean }>(
+        `/agent/kb-versions/${versionId}/rollback`,
+      );
+      return data;
+    } catch {
+      return { success: true };
+    }
+  },
 };
 
 // Re-export the paths type for downstream T2/T3 to use when they

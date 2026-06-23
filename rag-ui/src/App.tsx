@@ -3,16 +3,21 @@ import { HomePage } from "@/pages/HomePage";
 import { IngestPage } from "@/pages/IngestPage";
 import { PreviewPage } from "@/pages/PreviewPage";
 import { VersionsPage } from "@/pages/VersionsPage";
+import { GradualPage } from "@/pages/GradualPage";
+import { RateLimitPage } from "@/pages/RateLimitPage";
 import { Button } from "@/components/ui/button";
 
 /**
- * Root component — Phase 36-T1 scaffold + T2a /ingest + T2b /preview + T2c /versions.
+ * Root component — Phase 36-T1 scaffold + T2a /ingest + T2b /preview
+ * + T2c /versions + T3 /gradual + /rate-limit.
  *
  * Routing:
  *   /                  → HomePage (Phase 36 dashboard placeholder)
  *   /ingest            → IngestPage (drag-drop PDF → /preview/{jobId})
  *   /preview/:jobId    → PreviewPage (chunk pipeline counters)
  *   /versions          → VersionsPage (KB version metadata diff)
+ *   /gradual           → GradualPage (灰度发布 — version activate/rollback)
+ *   /rate-limit        → RateLimitPage (tenant rate limit stub)
  */
 export default function App() {
   return (
@@ -32,6 +37,12 @@ export default function App() {
             <Button asChild variant="ghost" size="sm">
               <Link to="/versions">/versions</Link>
             </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/gradual">/gradual</Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/rate-limit">/rate-limit</Link>
+            </Button>
           </nav>
         </div>
       </header>
@@ -41,6 +52,8 @@ export default function App() {
           <Route path="/ingest" element={<IngestPage />} />
           <Route path="/preview/:jobId" element={<PreviewPage />} />
           <Route path="/versions" element={<VersionsPage />} />
+          <Route path="/gradual" element={<GradualPage />} />
+          <Route path="/rate-limit" element={<RateLimitPage />} />
         </Routes>
       </main>
     </div>
