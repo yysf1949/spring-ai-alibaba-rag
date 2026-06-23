@@ -1,0 +1,37 @@
+{
+  "_comment": "跨境商品保修（境外购买）",
+  "kbId": "kb-warranty-cross-border",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/warranty-cross-border-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-warranty-cross-border",
+    "kbId": "kb-warranty-cross-border",
+    "documentId": "kb-warranty-cross-border/doc-warranty-cross-border-v1",
+    "title": "跨境商品保修规则",
+    "sections": [
+      {
+        "heading": "保修范围",
+        "body": "跨境商品享受与境内商品同等保修期。保修需提供：购买凭证（订单截图）、商品SN序列号、保修卡（部分品类）。海外仓发货的商品支持境内保修点维修。"
+      },
+      {
+        "heading": "运费承担",
+        "body": "跨境商品保修寄修运费规则：买家→国内维修点：由买家承担。维修点→买家：商家承担。保修期外的运费均由买家承担。建议购买前确认商品是否支持保修点覆盖。"
+      },
+      {
+        "heading": "不支持保修情况",
+        "body": "以下情况跨境商品不享受保修：境外本地版（无CCC认证）、海外免税商品、个人海淘代购、平行进口商品。需维修的可联系原购买地服务商，平台不提供中间协调。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "peter",
+    "rawText": "我海淘的笔记本电脑坏了国内能保修吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "跨境",
+    "mustContainSourceUri": "https://docs.example.com/warranty-cross-border-policy"
+  }
+}

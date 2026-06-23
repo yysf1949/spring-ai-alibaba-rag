@@ -1,0 +1,37 @@
+{
+  "_comment": "退货凭证丢失/无快递单号",
+  "kbId": "kb-return-no-receipt",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/return-no-receipt-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-return-no-receipt",
+    "kbId": "kb-return-no-receipt",
+    "documentId": "kb-return-no-receipt/doc-return-no-receipt-v1",
+    "title": "退货凭证缺失处理",
+    "sections": [
+      {
+        "heading": "快递单号丢失",
+        "body": "退货寄出后快递单号不慎丢失，买家可在订单详情页查看系统自动记录的运单号。若系统未记录，需联系快递公司客服补打运单凭证，凭补打凭证联系商家确认收货。"
+      },
+      {
+        "heading": "快递柜取件码失效",
+        "body": "退货寄出时选择快递柜投件，若取件码24小时内未被快递员取走，包裹将退回寄件人。买家需重新寄出并保留新运单号。多次投件失败建议改用上门取件服务。"
+      },
+      {
+        "heading": "商家未收到货",
+        "body": "若商家反馈未收到退货但买家已寄出，需提供快递公司出具的「已妥投证明」或签收记录作为证据。凭证明商家将在48小时内补登记收货并发起退款。无证明的争议订单，平台介入核实周期为7个工作日。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "olivia",
+    "rawText": "我把退货寄出去了但快递单号找不到了怎么办",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "运单号",
+    "mustContainSourceUri": "https://docs.example.com/return-no-receipt-policy"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "_comment": "退款申请撤回/取消",
+  "kbId": "kb-refund-cancel",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/refund-cancel-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-refund-cancel",
+    "kbId": "kb-refund-cancel",
+    "documentId": "kb-refund-cancel/doc-refund-cancel-v1",
+    "title": "退款申请撤回规则",
+    "sections": [
+      {
+        "heading": "商家审核前撤回",
+        "body": "退款申请提交后，在商家审核前买家可自行撤回。撤回后订单恢复为正常状态，商品仍可享受正常售后服务。撤回次数不计入信用记录。"
+      },
+      {
+        "heading": "审核通过后撤回",
+        "body": "退款审核通过后，若退款金额未到账，买家可联系商家协商撤回。商家同意后需在系统操作「退款撤回」，原支付金额将不再退回。撤回后买家需保留商品，不得再次申请退款。"
+      },
+      {
+        "heading": "恶意撤回限制",
+        "body": "同一订单30日内撤回退款申请超过3次的，系统将冻结该账户退款功能7天。冻结期间不影响正常下单。解冻后自动恢复退款功能。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "mia",
+    "rawText": "我刚申请退款现在又想要了，能撤回吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "撤回",
+    "mustContainSourceUri": "https://docs.example.com/refund-cancel-policy"
+  }
+}

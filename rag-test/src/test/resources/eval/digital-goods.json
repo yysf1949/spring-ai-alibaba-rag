@@ -1,0 +1,37 @@
+{
+  "_comment": "数字商品/会员订阅退款",
+  "kbId": "kb-digital-goods",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/digital-goods-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-digital-goods",
+    "kbId": "kb-digital-goods",
+    "documentId": "kb-digital-goods/doc-digital-goods-v1",
+    "title": "数字商品退款规则",
+    "sections": [
+      {
+        "heading": "未激活可退",
+        "body": "数字商品（数字卡券、会员订阅、网络课程）未激活或未使用状态下，可申请全额退款。退款申请需在购买后30日内提出。激活状态以系统记录为准。"
+      },
+      {
+        "heading": "已激活部分退",
+        "body": "会员订阅类商品激活后，按已使用天数比例扣除费用后退还剩余金额。扣除金额 = 月费 × (已使用天数 / 30)。剩余金额不足1元的不退款。"
+      },
+      {
+        "heading": "课程类例外",
+        "body": "网络课程开通后，已观看超过30%课程内容的视为已消费，不支持退款。未观看或观看<30%的可申请退款，退款金额按未观看课时占总课时比例计算。课程配套的实物教具已签收的，扣除教具成本。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "victor",
+    "rawText": "我买的视频会员开通3天了能退款吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "数字",
+    "mustContainSourceUri": "https://docs.example.com/digital-goods-policy"
+  }
+}

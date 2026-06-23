@@ -1,0 +1,37 @@
+{
+  "_comment": "会员积分兑换与失效",
+  "kbId": "kb-vip-points",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/vip-points-policy",
+  "permissionTags": ["ROLE_USER", "ROLE_VIP"],
+  "document": {
+    "tenantId": "tenant-vip-points",
+    "kbId": "kb-vip-points",
+    "documentId": "kb-vip-points/doc-vip-points-v1",
+    "title": "VIP积分规则",
+    "sections": [
+      {
+        "heading": "积分获取",
+        "body": "VIP会员每消费1元积1分（钻石2倍积分，铂金1.5倍积分）。确认收货后7日内积分到账。退款订单扣除对应积分。参与签到、评价、晒单等互动任务可获得额外积分。"
+      },
+      {
+        "heading": "积分兑换",
+        "body": "积分可在积分商城兑换商品或优惠券。100积分起兑。兑换商品包邮，配送时长与普通商品一致。优惠券兑换后立即生效，可在结算页使用。"
+      },
+      {
+        "heading": "积分有效期",
+        "body": "积分有效期为获得年份的次年年底。例如2025年获得的积分，有效期至2026年12月31日。每年12月1日系统提醒即将过期积分。过期未使用积分自动清零，不补发。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "sam",
+    "rawText": "我账户里的积分会过期作废吗",
+    "permissionTags": ["ROLE_USER", "ROLE_VIP"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "积分",
+    "mustContainSourceUri": "https://docs.example.com/vip-points-policy"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "_comment": "跨款式换货差价处理",
+  "kbId": "kb-exchange-cross-style",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/exchange-cross-style-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-exchange-cross-style",
+    "kbId": "kb-exchange-cross-style",
+    "documentId": "kb-exchange-cross-style/doc-exchange-cross-style-v1",
+    "title": "跨款式换货规则",
+    "sections": [
+      {
+        "heading": "差价规则",
+        "body": "跨款式换货时，按换出商品实付金额与换入商品当前售价计算差价。差价由买家补足（升级）或平台退回（降级）。退款部分按原支付渠道原路退回，差额支付支持在线支付或余额扣款。"
+      },
+      {
+        "heading": "限量商品",
+        "body": "如换入商品为限量款、联名款或活动特价商品，需先确认是否有库存。无库存时不支持跨款式换货，建议改申请退货后重新购买。"
+      },
+      {
+        "heading": "换货次数限制",
+        "body": "同一订单最多支持2次换货申请。每次换货完成后7日内可再次发起。超过2次后建议走退货流程，避免复杂的差价与运费计算。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "nora",
+    "rawText": "我买的卫衣想换成更贵的同系列外套，差价怎么补",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "差价",
+    "mustContainSourceUri": "https://docs.example.com/exchange-cross-style-policy"
+  }
+}

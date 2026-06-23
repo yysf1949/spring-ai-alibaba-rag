@@ -1,0 +1,37 @@
+{
+  "_comment": "退款时效与到账时间（按支付渠道区分）",
+  "kbId": "kb-refund-timeout",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/refund-timeout-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-refund-timeout",
+    "kbId": "kb-refund-timeout",
+    "documentId": "kb-refund-timeout/doc-refund-timeout-v1",
+    "title": "退款时效规则",
+    "sections": [
+      {
+        "heading": "原路退回时效",
+        "body": "退款审核通过后，将原路退回至买家支付账户。微信支付：1-3个工作日。支付宝：1-3个工作日。银行卡：3-7个工作日（具体以发卡行为准）。余额/优惠券：实时到账。"
+      },
+      {
+        "heading": "审核时效",
+        "body": "商家应在收到退款申请后24小时内完成审核。特殊商品或大额订单（≥5000元）审核时效延长至48小时。超时未审核系统将自动通过退款申请。"
+      },
+      {
+        "heading": "退款失败处理",
+        "body": "如原支付账户已注销或异常导致退款失败，系统将通过站内信通知买家重新填写退款账户。重新填写后，再次发起退款时效按新提交时间计算。买家需在30日内完成账户更新，否则视为放弃退款。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "liam",
+    "rawText": "退款审核通过了但银行卡3天还没收到怎么办",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "银行卡",
+    "mustContainSourceUri": "https://docs.example.com/refund-timeout-policy"
+  }
+}

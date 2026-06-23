@@ -1,0 +1,37 @@
+{
+  "_comment": "活动价（秒杀/限时折扣）退款金额",
+  "kbId": "kb-flash-sale-refund",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/flash-sale-refund-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-flash-sale-refund",
+    "kbId": "kb-flash-sale-refund",
+    "documentId": "kb-flash-sale-refund/doc-flash-sale-refund-v1",
+    "title": "活动价退款规则",
+    "sections": [
+      {
+        "heading": "退款金额计算",
+        "body": "活动价（秒杀、限时折扣、拼团）订单退款时，按实际支付金额退款，不恢复活动库存。活动期间同一买家限购数量的，限购数量在退款后释放。优惠券部分按券退回规则处理。"
+      },
+      {
+        "heading": "差价处理",
+        "body": "活动结束后商品价格下调，已购买家不能申请差价补偿。如商品存在质量问题或与活动描述不符的，可申请退货退款，不支持仅退款差价。"
+      },
+      {
+        "heading": "活动商品售后",
+        "body": "活动商品享受与正价商品同等的售后保障。质量问题7天内可退，15天内可换。活动商品不支持价保（购买后价格下调的差价补偿）。赠品缺失的，可申请补发或按赠品价值退款。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "yara",
+    "rawText": "我秒杀买的商品想退能退实付金额吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "活动",
+    "mustContainSourceUri": "https://docs.example.com/flash-sale-refund-policy"
+  }
+}

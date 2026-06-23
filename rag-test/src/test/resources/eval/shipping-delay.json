@@ -1,0 +1,37 @@
+{
+  "_comment": "物流延迟/超期赔付",
+  "kbId": "kb-shipping-delay",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/shipping-delay-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-shipping-delay",
+    "kbId": "kb-shipping-delay",
+    "documentId": "kb-shipping-delay/doc-shipping-delay-v1",
+    "title": "物流延迟赔付规则",
+    "sections": [
+      {
+        "heading": "标准时效",
+        "body": "普通快递配送时效：省内1-3天，省外3-5天，西部偏远地区5-7天。承诺时效为正常情况下预估时间，不含节假日及不可抗力。"
+      },
+      {
+        "heading": "延迟赔付",
+        "body": "超过承诺时效1天的，提供5元无门槛优惠券；超过3天的，提供20元无门槛优惠券；超过7天的，免运费且额外补偿30元。赔付自动发放至买家账户，无需申请。"
+      },
+      {
+        "heading": "不可抗力",
+        "body": "恶劣天气（台风、暴雨暴雪）、疫情管控、自然灾害等不可抗力导致的延迟不计入赔付范围。快递公司发布公告后系统自动识别并暂停赔付。买家可选择继续等待或申请退款。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "tina",
+    "rawText": "我的快递已经延迟3天了有赔偿吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "延迟",
+    "mustContainSourceUri": "https://docs.example.com/shipping-delay-policy"
+  }
+}

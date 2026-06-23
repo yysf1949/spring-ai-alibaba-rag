@@ -1,0 +1,37 @@
+{
+  "_comment": "偏远地区运费加价",
+  "kbId": "kb-remote-area-shipping",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/remote-area-shipping-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-remote-area-shipping",
+    "kbId": "kb-remote-area-shipping",
+    "documentId": "kb-remote-area-shipping/doc-remote-area-shipping-v1",
+    "title": "偏远地区运费规则",
+    "sections": [
+      {
+        "heading": "偏远地区定义",
+        "body": "偏远地区指新疆、西藏、青海、内蒙古、甘肃、宁夏的部分县级及以下行政区。完整偏远地区清单在结算页输入收货地址后自动识别并提示。具体偏远地区可能根据物流公司调整。"
+      },
+      {
+        "heading": "运费加价",
+        "body": "偏远地区运费在标准运费基础上加价10-30元，具体金额根据重量与目的地计算。下单前系统会显示最终运费，加价部分不支持使用满减优惠券。仅部分商家支持配送偏远地区。"
+      },
+      {
+        "heading": "自提点选项",
+        "body": "偏远地区买家可选择自提点配送。自提点覆盖范围内的订单免偏远地区加价。自提点清单在结算页选择地址后展示。无自提点的地区仅支持快递配送。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "ursula",
+    "rawText": "寄到新疆喀什地区偏远地区运费怎么算",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "偏远",
+    "mustContainSourceUri": "https://docs.example.com/remote-area-shipping-policy"
+  }
+}

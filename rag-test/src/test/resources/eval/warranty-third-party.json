@@ -1,0 +1,37 @@
+{
+  "_comment": "第三方维修点授权与争议",
+  "kbId": "kb-warranty-third-party",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/warranty-third-party-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-warranty-third-party",
+    "kbId": "kb-warranty-third-party",
+    "documentId": "kb-warranty-third-party/doc-warranty-third-party-v1",
+    "title": "第三方维修规则",
+    "sections": [
+      {
+        "heading": "授权维修点",
+        "body": "品牌方授权的第三方维修点与官方维修点享受同等保修效力。维修前请通过官方渠道核实维修点授权状态。未授权维修点的维修记录可能导致官方保修失效。"
+      },
+      {
+        "heading": "维修争议处理",
+        "body": "若维修后出现同故障复发（30日内），可申请免费返修。返修期间运费由维修方承担。维修后60日内出现非维修相关故障的，由维修方出具检测报告，买家凭报告联系商家。"
+      },
+      {
+        "heading": "维修配件保障",
+        "body": "官方维修点使用的配件为原厂件，第三方维修点可使用原厂件或品牌认证的兼容件。维修后保留旧配件90日，期间买家可申请领回。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "quinn",
+    "rawText": "我的手机在第三方维修点修过后又坏了还能保修吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "授权",
+    "mustContainSourceUri": "https://docs.example.com/warranty-third-party-policy"
+  }
+}

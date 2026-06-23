@@ -1,0 +1,37 @@
+{
+  "_comment": "优惠券叠加规则",
+  "kbId": "kb-coupon-stacking",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/coupon-stacking-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-coupon-stacking",
+    "kbId": "kb-coupon-stacking",
+    "documentId": "kb-coupon-stacking/doc-coupon-stacking-v1",
+    "title": "优惠券使用规则",
+    "sections": [
+      {
+        "heading": "叠加规则",
+        "body": "同一订单最多叠加3张优惠券（含店铺券、平台券、品类券）。满减券与折扣券可同时使用。同一类型券仅限1张（如店铺满减券仅限1张）。运费券不计入叠加数量。"
+      },
+      {
+        "heading": "互斥情况",
+        "body": "以下情况优惠券不可叠加：限时折扣活动商品（已享受折扣价）；秒杀商品；预售定金阶段；拼团订单。优惠券仅在结算页自动识别可用范围，互斥时优先使用面值最大的券。"
+      },
+      {
+        "heading": "退款时券处理",
+        "body": "使用优惠券的订单退款时，已使用的优惠券按以下规则处理：有效期内的券原路退回；已过期的券不退；满减券退回后扣除实际优惠金额退款。券退回一般在退款完成后24小时内到账。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "xavier",
+    "rawText": "我能同时用店铺满减券和平台优惠券吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "叠加",
+    "mustContainSourceUri": "https://docs.example.com/coupon-stacking-policy"
+  }
+}

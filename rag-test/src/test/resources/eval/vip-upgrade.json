@@ -1,0 +1,37 @@
+{
+  "_comment": "VIP等级升降级规则",
+  "kbId": "kb-vip-upgrade",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/vip-upgrade-policy",
+  "permissionTags": ["ROLE_USER", "ROLE_VIP"],
+  "document": {
+    "tenantId": "tenant-vip-upgrade",
+    "kbId": "kb-vip-upgrade",
+    "documentId": "kb-vip-upgrade/doc-vip-upgrade-v1",
+    "title": "VIP等级调整规则",
+    "sections": [
+      {
+        "heading": "升级规则",
+        "body": "VIP等级根据近12个月累计消费金额自动调整。消费达到下档门槛的80%时，下月1日自动评估升级。黄金升级铂金需年消费≥20000元，铂金升级钻石需年消费≥50000元。"
+      },
+      {
+        "heading": "降级与保级",
+        "body": "年度消费低于当前等级门槛的50%时降级。黄金会员年消费<2500元降为普通用户。铂金会员年消费<10000元降为黄金。钻石会员年消费<25000元降为铂金。保级期内享受原等级所有权益。"
+      },
+      {
+        "heading": "等级有效期",
+        "body": "VIP等级有效期为自然年（1月1日至12月31日）。每年1月1日根据上年消费重新评估等级。等级变更通过站内信通知。会员可随时在会员中心查看当前等级与有效期。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "rachel",
+    "rawText": "我铂金VIP今年消费不够会被降级吗",
+    "permissionTags": ["ROLE_USER", "ROLE_VIP"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "降级",
+    "mustContainSourceUri": "https://docs.example.com/vip-upgrade-policy"
+  }
+}

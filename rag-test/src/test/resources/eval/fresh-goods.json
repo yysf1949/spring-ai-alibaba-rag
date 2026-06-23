@@ -1,0 +1,37 @@
+{
+  "_comment": "生鲜商品退换货",
+  "kbId": "kb-fresh-goods",
+  "version": 1,
+  "sourceUri": "https://docs.example.com/fresh-goods-policy",
+  "permissionTags": ["ROLE_USER"],
+  "document": {
+    "tenantId": "tenant-fresh-goods",
+    "kbId": "kb-fresh-goods",
+    "documentId": "kb-fresh-goods/doc-fresh-goods-v1",
+    "title": "生鲜商品售后规则",
+    "sections": [
+      {
+        "heading": "签收时质量检查",
+        "body": "生鲜商品（水果、海鲜、肉类、鲜花）建议当面签收时检查质量。如有问题可直接拒收并拍照，拒收后商家将全额退款或重新发货。如已签收后发现质量问题，需在签收后2小时内联系客服。"
+      },
+      {
+        "heading": "质量问题处理",
+        "body": "质量问题（腐烂、变质、死亡等）凭照片或视频申请退款。退款金额按问题商品比例计算。运费由商家承担。生鲜商品不支持7天无理由退货。"
+      },
+      {
+        "heading": "物流途中损耗",
+        "body": "生鲜商品在物流途中因温度、保鲜问题导致的损耗，由商家与物流公司协商追责。损耗比例超过20%的，平台介入协调全额退款。损耗比例10%-20%的，按比例部分退款。"
+      }
+    ]
+  },
+  "query": {
+    "userId": "wendy",
+    "rawText": "我买的水果签收时有几个烂的能退吗",
+    "permissionTags": ["ROLE_USER"],
+    "topK": 5
+  },
+  "expected": {
+    "mustContainSubstring": "生鲜",
+    "mustContainSourceUri": "https://docs.example.com/fresh-goods-policy"
+  }
+}
