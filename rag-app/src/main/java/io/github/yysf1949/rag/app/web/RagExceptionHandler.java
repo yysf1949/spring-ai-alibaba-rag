@@ -132,6 +132,32 @@ public class RagExceptionHandler {
                 ex.getMessage()));
     }
 
+    /**
+     * Phase 35 (narrow-scope rebuild v2) — the {@code /api/ingest/multipart}
+     * endpoint only accepts {@code application/pdf}. Anything else (e.g. a
+     * user dragging a Word document onto the KB 管理 UI) returns 400 with
+     * an explanatory {@code application/problem+json} body. The
+     * {@code rejectedContentType} property lets the UI display "this file
+     * type isn't supported, only PDF" without parsing the detail string.
+     */
+    @ExceptionHandler(IngestController.UnsupportedMultipartContentTypeException.class)
+    public ProblemDetail unsupportedMultipartContentType(
+            IngestController.UnsupportedMultipartContentTypeException ex) {
+        log.info("Unsupported multipart content type: {}", ex.getMessage());
+        ProblemDetail pd = problem(HttpStatus.BAD_REQUEST,
+                "unsupported-multipart-content-type",
+                ex.getMessage());
+        // Pull the rejected content type out of the message ("...got: X") for
+        // programmatic clients. The detail stays human-readable; this is
+        // machine-readable.
+        String detail = ex.getMessage() == null ? "" : ex.getMessage();
+        int idx = detail.indexOf("got: ");
+        if (idx >= 0) {
+            pd.setProperty("rejectedContentType", detail.substring(idx + 5).trim());
+        }
+        return pd;
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ProblemDetail unexpected(RuntimeException ex) {
         log.error("Unhandled exception in QA controller", ex);

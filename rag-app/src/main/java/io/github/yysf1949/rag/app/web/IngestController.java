@@ -23,6 +23,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,7 +32,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -187,6 +190,109 @@ public class IngestController {
             sample.stop(meterRegistry.timer(
                     "rag.ingest.http.submit.duration",
                     Tags.of("tenant", tenant)));
+        }
+    }
+
+    @PostMapping(value = "/multipart", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(
+            summary = "Submit a document via multipart upload (file + JSON metadata).",
+            description = "Accepts a binary file in the `file` part and a JSON `IngestRequest` in the "
+                    + "`request` part. The file is wrapped as a single-section Document and dispatched "
+                    + "through the same `ingestService.ingestAsync` path as the JSON endpoint. Only "
+                    + "`application/pdf` is accepted; any other content type returns 400. Returns 202 "
+                    + "Accepted with the freshly-created PENDING job — same semantics as the JSON "
+                    + "endpoint.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "Job accepted, processing in background."),
+            @ApiResponse(responseCode = "400", description = "Validation failure: missing file, non-PDF content type, or invalid IngestRequest metadata.",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "401", description = "Missing or blank X-Tenant-Id header.",
+                    content = @Content(schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    public ResponseEntity<IngestJob> submitMultipart(
+            @RequestHeader(value = MdcTenantFilter.HEADER_TENANT, required = false) String tenantHeader,
+            HttpServletRequest request,
+            @RequestPart("file") MultipartFile file,
+            @RequestPart("request") @Valid IngestRequest meta) {
+        String tenant = requiredTenant(request, tenantHeader);
+        // Phase 35 (narrow-scope rebuild v2) — only accept application/pdf for the
+        // multipart path. We could be lenient and accept any content type, but the
+        // explicit PDF contract matches what the Phase 36 KB 管理 UI drag-and-drop
+        // path needs and gives callers a clear 400 on a wrong file. Spring's
+        // `MediaType.APPLICATION_PDF_VALUE` is the canonical constant.
+        String contentType = file.getContentType();
+        if (contentType == null || !MediaType.APPLICATION_PDF_VALUE.equalsIgnoreCase(contentType)) {
+            throw new UnsupportedMultipartContentTypeException(
+                    "Multipart file must have Content-Type=application/pdf, got: " + contentType);
+        }
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String requestId = MdcTenantFilter.requestId(request);
+        try {
+            // Wrap the uploaded PDF as a single-section Document. The body is a
+            // human-readable marker (filename + size) — the actual binary parsing
+            // is left to the upstream pipeline stage (per Document.Section's
+            // contract, body must be non-null text). The KB 管理 UI drag-and-drop
+            // path in Phase 36 supplies the parsed content; this controller is
+            // the wire-format adapter only.
+            String body = "[uploaded PDF: " + (file.getOriginalFilename() == null
+                    ? "unknown" : file.getOriginalFilename())
+                    + ", size=" + file.getSize() + " bytes]";
+            Document doc = new Document(
+                    tenant,
+                    meta.kbId,
+                    meta.documentId,
+                    String.valueOf(meta.documentVersion),
+                    meta.title,
+                    meta.sourceUri,
+                    meta.permissionTags == null ? Set.of() : Set.copyOf(meta.permissionTags),
+                    List.of(new Document.Section("", body)));
+            IngestJob job = ingestService.ingestAsync(doc);
+            meterRegistry.counter(
+                    "rag.ingest.documents.total",
+                    Tags.of("tenant", tenant, "kbId", meta.kbId,
+                            "outcome", job.status().name(),
+                            "source", "multipart"))
+                    .increment();
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("documentId", meta.documentId);
+            fields.put("documentVersion", meta.documentVersion);
+            fields.put("filename", file.getOriginalFilename());
+            fields.put("contentType", contentType);
+            fields.put("size", file.getSize());
+            fields.put("source", "multipart");
+            audit.record(AuditEvent.of(
+                    AuditEvent.Type.KB_INGEST,
+                    tenant,
+                    request.getHeader("X-User-Id"),
+                    requestId,
+                    job.jobId(),
+                    job.status() == IngestJobStatus.FAILED ? "FAILURE" : "SUCCESS",
+                    fields));
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+        } catch (RuntimeException ex) {
+            meterRegistry.counter(
+                    "rag.ingest.failures.total",
+                    Tags.of("tenant", tenant, "kbId", meta.kbId,
+                            "stage", "submit-multipart",
+                            "source", "multipart"))
+                    .increment();
+            Map<String, Object> fields = new LinkedHashMap<>();
+            fields.put("error", ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            fields.put("filename", file.getOriginalFilename());
+            fields.put("source", "multipart");
+            audit.record(AuditEvent.of(
+                    AuditEvent.Type.KB_INGEST,
+                    tenant,
+                    request.getHeader("X-User-Id"),
+                    requestId,
+                    null,
+                    "FAILURE",
+                    fields));
+            throw ex;
+        } finally {
+            sample.stop(meterRegistry.timer(
+                    "rag.ingest.http.submit.duration",
+                    Tags.of("tenant", tenant, "source", "multipart")));
         }
     }
 
@@ -365,6 +471,20 @@ public class IngestController {
      */
     public static class IngestJobNotFoundException extends RuntimeException {
         public IngestJobNotFoundException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Thrown when the {@code /api/ingest/multipart} endpoint receives a file
+     * with a non-PDF {@code Content-Type}. Translated to HTTP 400 by
+     * {@link RagExceptionHandler}. Phase 35 narrows the multipart contract
+     * to {@code application/pdf} only — the Phase 36 KB 管理 UI drag-and-drop
+     * path needs a strict contract so a wrong file fails fast with a
+     * readable error rather than silently ending up in the pipeline.
+     */
+    public static class UnsupportedMultipartContentTypeException extends RuntimeException {
+        public UnsupportedMultipartContentTypeException(String message) {
             super(message);
         }
     }
