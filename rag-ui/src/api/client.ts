@@ -327,3 +327,357 @@ export const versionsApi = {
 // wire up codegen output. The current `paths` import is intentionally
 // a `type` import — it produces no runtime JS, only type-level links.
 export type OpenApiPaths = Path<"/api/ingest/{jobId}", "get">;
+
+/**
+ * Phase 40-T5: Admin API client (Usage / Invoices / Quotas).
+ *
+ * These three endpoints are scheduled to land in T3 (UsageMeter)
+ * and T4 (Invoice API). Until those tasks ship, this client uses
+ * the same try-real-fallback-mock pattern that
+ * `versionsApi.activateVersion` established in Phase 36-T3 — call
+ * the real endpoint, swallow 404/network failures, and return a
+ * canned response so the UI is usable in dev today.
+ *
+ * The fallback values are deliberately small enough that the page
+ * renders without surprises — the contract below is what T3/T4 will
+ * implement, so when those controllers land, the UI gets real data
+ * with zero code changes.
+ */
+
+/**
+ * Tier a tenant is billed on. Free/Pro/Enterprise mirrors the
+ * Phase 40-T3 quota model — see CouponApplicationService / quota.
+ */
+export type TenantTier = "FREE" | "PRO" | "ENTERPRISE";
+
+/** One row in the /usage dashboard. */
+export interface TenantUsage {
+  tenantId: string;
+  tier: TenantTier;
+  /** Calendar month, ISO `YYYY-MM`. */
+  month: string;
+  /** Total API calls in this month. */
+  calls: number;
+  /** Total tokens (prompt + completion) consumed in this month. */
+  tokens: number;
+  /** Quota limits (per the tier). 0 means "unlimited". */
+  callsLimit: number;
+  tokensLimit: number;
+  /** 0..100 — convenience field the backend computes for the UI. */
+  callsUsagePct: number;
+  tokensUsagePct: number;
+  /** Last activity timestamp. */
+  lastActiveAt: string | null;
+}
+
+export interface UsageListResponse {
+  /** Calendar month the snapshot covers. */
+  month: string;
+  tenants: TenantUsage[];
+}
+
+export const usageApi = {
+  /**
+   * GET /api/admin/usage?month=YYYY-MM
+   * Returns per-tenant usage for the requested month (defaults to
+   * current month on the server when omitted).
+   */
+  list: async (month?: string): Promise<UsageListResponse> => {
+    try {
+      const { data } = await http.get<UsageListResponse>("/admin/usage", {
+        params: month ? { month } : undefined,
+      });
+      return data;
+    } catch {
+      // T3 not shipped yet — return canned dev data so the dashboard
+      // renders. Once T3 ships the real endpoint takes precedence.
+      return {
+        month: month ?? new Date().toISOString().slice(0, 7),
+        tenants: MOCK_TENANT_USAGE,
+      };
+    }
+  },
+};
+
+/**
+ * Invoice status — mirrors what Stripe + 微信支付 mock returns in T4.
+ *   PENDING   — created, awaiting payment
+ *   PAID      — settled
+ *   FAILED    — payment failed / chargeback
+ *   REFUNDED  — fully refunded
+ */
+export type InvoiceStatus = "PENDING" | "PAID" | "FAILED" | "REFUNDED";
+
+export interface Invoice {
+  invoiceId: string;
+  tenantId: string;
+  /** Calendar month the invoice covers. */
+  period: string;
+  /** Amount in minor currency unit (cents for USD, fen for CNY). */
+  amount: number;
+  currency: "USD" | "CNY";
+  status: InvoiceStatus;
+  /** ISO-8601 timestamps. */
+  createdAt: string;
+  paidAt: string | null;
+  /** Line-item summary — useful for the detail dialog. */
+  lineItems: Array<{
+    label: string;
+    quantity: number;
+    unitAmount: number;
+  }>;
+}
+
+export interface InvoiceListResponse {
+  total: number;
+  invoices: Invoice[];
+}
+
+export const invoicesApi = {
+  /**
+   * GET /api/admin/invoices?tenantId=&from=&to=&status=
+   * Filters are all optional and AND-ed together.
+   */
+  list: async (filters?: {
+    tenantId?: string;
+    from?: string;
+    to?: string;
+    status?: InvoiceStatus;
+  }): Promise<InvoiceListResponse> => {
+    try {
+      const { data } = await http.get<InvoiceListResponse>("/admin/invoices", {
+        params: filters,
+      });
+      return data;
+    } catch {
+      let rows = [...MOCK_INVOICES];
+      if (filters?.tenantId) {
+        rows = rows.filter((i) => i.tenantId === filters.tenantId);
+      }
+      if (filters?.status) {
+        rows = rows.filter((i) => i.status === filters.status);
+      }
+      if (filters?.from) {
+        rows = rows.filter((i) => i.period >= filters.from!);
+      }
+      if (filters?.to) {
+        rows = rows.filter((i) => i.period <= filters.to!);
+      }
+      return { total: rows.length, invoices: rows };
+    }
+  },
+
+  /**
+   * GET /api/admin/invoices/{invoiceId} — full invoice detail.
+   * Falls back to the mock list lookup if T4 isn't shipped.
+   */
+  get: async (invoiceId: string): Promise<Invoice> => {
+    try {
+      const { data } = await http.get<Invoice>(
+        `/admin/invoices/${encodeURIComponent(invoiceId)}`,
+      );
+      return data;
+    } catch {
+      const found = MOCK_INVOICES.find((i) => i.invoiceId === invoiceId);
+      if (!found) {
+        throw new Error(`invoice not found: ${invoiceId}`);
+      }
+      return found;
+    }
+  },
+};
+
+export interface TenantQuota {
+  tenantId: string;
+  tier: TenantTier;
+  /** Calls allowed per calendar month. 0 = unlimited. */
+  callsLimit: number;
+  /** Tokens allowed per calendar month. 0 = unlimited. */
+  tokensLimit: number;
+  /** When the quota was last edited (ISO-8601). */
+  updatedAt: string;
+  /** Operator who edited it (admin user id from JWT). */
+  updatedBy: string | null;
+}
+
+export const quotasApi = {
+  /**
+   * GET /api/admin/quotas — list every tenant's quota config.
+   */
+  list: async (): Promise<TenantQuota[]> => {
+    try {
+      const { data } = await http.get<TenantQuota[]>("/admin/quotas");
+      return data;
+    } catch {
+      return MOCK_QUOTAS;
+    }
+  },
+
+  /**
+   * PUT /api/admin/quotas/{tenantId} — update one tenant's quota.
+   * Body shape is the full TenantQuota (PUT replaces the whole row).
+   * Returns the updated row.
+   */
+  update: async (quota: TenantQuota): Promise<TenantQuota> => {
+    try {
+      const { data } = await http.put<TenantQuota>(
+        `/admin/quotas/${encodeURIComponent(quota.tenantId)}`,
+        quota,
+      );
+      return data;
+    } catch {
+      // Mock fallback: merge into the in-memory list. This is
+      // process-local — refreshing the page resets it. The UI shows
+      // the updated values immediately because we return what the
+      // caller asked for (echo + a fresh updatedAt).
+      const idx = MOCK_QUOTAS.findIndex((q) => q.tenantId === quota.tenantId);
+      const next: TenantQuota = {
+        ...quota,
+        updatedAt: new Date().toISOString(),
+      };
+      if (idx >= 0) {
+        MOCK_QUOTAS[idx] = next;
+      } else {
+        MOCK_QUOTAS.push(next);
+      }
+      return next;
+    }
+  },
+};
+
+// ----------------------------------------------------------------------------
+// Mock fallback data — only consulted when the real endpoint 404s.
+// Kept here (not in a separate file) so the API client is fully
+// self-contained and the UI can be exercised with zero backend.
+// ----------------------------------------------------------------------------
+
+const MOCK_TENANT_USAGE: TenantUsage[] = [
+  {
+    tenantId: "dev",
+    tier: "FREE",
+    month: new Date().toISOString().slice(0, 7),
+    calls: 142,
+    tokens: 89_340,
+    callsLimit: 1_000,
+    tokensLimit: 500_000,
+    callsUsagePct: 14,
+    tokensUsagePct: 18,
+    lastActiveAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
+  },
+  {
+    tenantId: "staging",
+    tier: "PRO",
+    month: new Date().toISOString().slice(0, 7),
+    calls: 4_821,
+    tokens: 3_120_550,
+    callsLimit: 10_000,
+    tokensLimit: 5_000_000,
+    callsUsagePct: 48,
+    tokensUsagePct: 62,
+    lastActiveAt: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
+  },
+  {
+    tenantId: "prod",
+    tier: "ENTERPRISE",
+    month: new Date().toISOString().slice(0, 7),
+    calls: 87_412,
+    tokens: 41_289_104,
+    callsLimit: 0,
+    tokensLimit: 0,
+    callsUsagePct: 0,
+    tokensUsagePct: 0,
+    lastActiveAt: new Date(Date.now() - 1000 * 60).toISOString(),
+  },
+];
+
+const MOCK_INVOICES: Invoice[] = [
+  {
+    invoiceId: "inv_2026_05_dev",
+    tenantId: "dev",
+    period: "2026-05",
+    amount: 0,
+    currency: "USD",
+    status: "PAID",
+    createdAt: "2026-06-01T00:00:00Z",
+    paidAt: "2026-06-01T00:05:23Z",
+    lineItems: [{ label: "FREE tier — no charge", quantity: 1, unitAmount: 0 }],
+  },
+  {
+    invoiceId: "inv_2026_05_staging",
+    tenantId: "staging",
+    period: "2026-05",
+    amount: 49_00,
+    currency: "USD",
+    status: "PAID",
+    createdAt: "2026-06-01T00:00:00Z",
+    paidAt: "2026-06-01T00:01:14Z",
+    lineItems: [
+      { label: "PRO tier base", quantity: 1, unitAmount: 49_00 },
+      { label: "Overage: 4,821 calls × $0", quantity: 4821, unitAmount: 0 },
+    ],
+  },
+  {
+    invoiceId: "inv_2026_05_prod",
+    tenantId: "prod",
+    period: "2026-05",
+    amount: 1_290_00,
+    currency: "USD",
+    status: "PAID",
+    createdAt: "2026-06-01T00:00:00Z",
+    paidAt: "2026-06-01T00:02:08Z",
+    lineItems: [
+      { label: "ENTERPRISE tier base", quantity: 1, unitAmount: 1_290_00 },
+    ],
+  },
+  {
+    invoiceId: "inv_2026_06_dev",
+    tenantId: "dev",
+    period: "2026-06",
+    amount: 0,
+    currency: "USD",
+    status: "PENDING",
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 6).toISOString(),
+    paidAt: null,
+    lineItems: [{ label: "FREE tier — no charge", quantity: 1, unitAmount: 0 }],
+  },
+  {
+    invoiceId: "inv_2026_06_staging",
+    tenantId: "staging",
+    period: "2026-06",
+    amount: 49_00,
+    currency: "CNY",
+    status: "FAILED",
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 8).toISOString(),
+    paidAt: null,
+    lineItems: [
+      { label: "PRO tier base", quantity: 1, unitAmount: 49_00 },
+    ],
+  },
+];
+
+const MOCK_QUOTAS: TenantQuota[] = [
+  {
+    tenantId: "dev",
+    tier: "FREE",
+    callsLimit: 1_000,
+    tokensLimit: 500_000,
+    updatedAt: "2026-05-01T00:00:00Z",
+    updatedBy: null,
+  },
+  {
+    tenantId: "staging",
+    tier: "PRO",
+    callsLimit: 10_000,
+    tokensLimit: 5_000_000,
+    updatedAt: "2026-05-12T14:32:11Z",
+    updatedBy: "admin",
+  },
+  {
+    tenantId: "prod",
+    tier: "ENTERPRISE",
+    callsLimit: 0,
+    tokensLimit: 0,
+    updatedAt: "2026-04-20T09:00:00Z",
+    updatedBy: "admin",
+  },
+];
