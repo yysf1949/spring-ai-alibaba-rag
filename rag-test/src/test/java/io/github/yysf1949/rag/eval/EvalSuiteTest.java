@@ -16,6 +16,13 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -104,9 +111,23 @@ class EvalSuiteTest {
         // Write report
         String outputDir = System.getProperty("eval.output.dir",
                 System.getenv().getOrDefault("EVAL_OUTPUT_DIR", "docs/eval"));
-        new File(outputDir).mkdirs();
-        mapper.writeValue(new File(outputDir, "eval-report.json"), results);
-        log.info("Eval report written to {}/eval-report.json", outputDir);
+        File outputDirFile = new File(outputDir);
+        outputDirFile.mkdirs();
+        File reportFile = new File(outputDirFile, "eval-report.json");
+        mapper.writeValue(reportFile, results);
+        log.info("Eval report written to {}", reportFile);
+
+        // Archive to regression-history (Phase 33 T4) — copy the just-written
+        // report into a timestamped file under docs/eval/regression-history/
+        // so CI runs accumulate a regression trail. UTC timestamp avoids
+        // timezone ambiguity across runner locales.
+        Path historyDir = Paths.get(outputDir, "regression-history");
+        Files.createDirectories(historyDir);
+        String stamp = ZonedDateTime.now(ZoneOffset.UTC)
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm"));
+        Path historyFile = historyDir.resolve(stamp + ".json");
+        Files.copy(reportFile.toPath(), historyFile, StandardCopyOption.REPLACE_EXISTING);
+        log.info("Eval history archived to {}", historyFile);
 
         // Assert: at least 50% pass rate
         long passed = results.stream().filter(EvalResult::pass).count();
