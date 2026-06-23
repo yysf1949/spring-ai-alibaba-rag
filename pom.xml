@@ -33,6 +33,7 @@
         <module>rag-pipeline</module>
         <module>rag-app</module>
         <module>rag-test</module>
+        <module>rag-llm</module>
     </modules>
 
     <properties>
@@ -63,6 +64,9 @@
         <!-- Utility -->
         <lombok.version>1.18.34</lombok.version>
         <commons-lang3.version>3.17.0</commons-lang3.version>
+
+        <!-- Compiler plugin override for Java 21.0.11 compatibility -->
+        <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -123,8 +127,10 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven-compiler-plugin.version}</version>
                     <configuration>
-                        <release>${java.version}</release>
+                        <source>${java.version}</source>
+                        <target>${java.version}</target>
                         <parameters>true</parameters>
                         <compilerArgs>
                             <arg>-Xlint:all,-serial,-processing</arg>
