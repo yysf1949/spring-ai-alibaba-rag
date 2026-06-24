@@ -28,6 +28,8 @@ import io.github.yysf1949.rag.core.port.VectorStore;
 import io.github.yysf1949.rag.pipeline.context.ContextAssembler;
 import io.github.yysf1949.rag.pipeline.context.ContextAssembler.AssembledPrompt;
 import io.github.yysf1949.rag.pipeline.logging.PipelineMdc;
+import io.github.yysf1949.rag.pipeline.qa.experiment.ExperimentAware;
+import io.github.yysf1949.rag.pipeline.qa.experiment.ExperimentVariant;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
@@ -107,6 +109,16 @@ public class QAServiceImpl implements QAService {
     private final MeterRegistry meterRegistry;
     private final RateLimiter rateLimiter; // may be null in hermetic tests
     private final LlmAuditHook llmAuditHook; // may be NOOP in tests
+    /**
+     * A/B wiring — optional. When present, every request goes through
+     * {@link ExperimentAware#assignVariant(String, String)} and the chosen
+     * variant's exposure counter is incremented. Outcome recording happens
+     * out-of-band via {@link #recordExperimentOutcome(String, String, boolean, Query)}.
+     * Phase 39 / R14.
+     */
+    private ExperimentAware experimentAware = ExperimentAware.NOOP;
+    /** Active experiment name — set by Spring config; defaults to none. */
+    private volatile String activeExperimentName = null;
 
     /**
      * Stage timer names — spec §9.1 metric {@code rag.qa.latency.ms{stage}}.
@@ -203,6 +215,47 @@ public class QAServiceImpl implements QAService {
         this.llmAuditHook = (llmAuditHook == null) ? LlmAuditHook.NOOP : llmAuditHook;
     }
 
+    // ─── A/B experiment wiring (Phase 39 / R14) ──────────────────────────
+
+    /**
+     * Wire the experiment infrastructure. Passing {@code null} disables A/B.
+     * Safe to call at runtime (the field is read on every {@link #answer(Query)}).
+     */
+    public void setExperimentAware(ExperimentAware experimentAware) {
+        this.experimentAware = (experimentAware == null) ? ExperimentAware.NOOP : experimentAware;
+    }
+
+    /**
+     * Name of the experiment to route requests into. When {@code null}
+     * (the default), no A/B logic runs — every request is a CONTROL pass-through.
+     */
+    public void setActiveExperimentName(String experimentName) {
+        this.activeExperimentName = (experimentName == null || experimentName.isBlank())
+                ? null : experimentName;
+    }
+
+    /**
+     * Record an A/B outcome (positive = thumbs-up / citation click / etc.).
+     * Called by the HTTP layer when feedback arrives.
+     */
+    @Override
+    public void recordExperimentOutcome(String experimentName, String variantId,
+                                        boolean positive, Query query) {
+        if (experimentName == null || variantId == null) {
+            return;
+        }
+        ExperimentVariant v = new ExperimentVariant(variantId, 1.0);
+        try {
+            experimentAware.recordOutcome(experimentName, v, positive);
+        } catch (RuntimeException e) {
+            // Outcome recording must never break the user's request flow.
+            log.warn("Failed to record experiment outcome for {} variant {}: {}",
+                    experimentName, variantId, e.getMessage());
+        }
+    }
+
+    // ─── /experiment wiring ──────────────────────────────────────────────
+
     @Override
     public Answer answer(Query query) {
         Objects.requireNonNull(query, "query");
@@ -264,6 +317,21 @@ public class QAServiceImpl implements QAService {
      */
     private Answer answerInternal(Query query, long t0, long[] stamps,
                                   Map<String, Timer> stageTimers) {
+        // Phase 39 / R14 — A/B experiment exposure. If an experiment is wired,
+        // resolve the variant for this subject and increment the exposure
+        // counter ONCE per request. We do this before any expensive work so
+        // even an early cache-hit gets counted as an exposure on the variant
+        // — otherwise the variant pool could drift away from the assignment.
+        ExperimentVariant activeVariant = null;
+        String experimentName = this.activeExperimentName;
+        if (experimentName != null && query.userId() != null) {
+            activeVariant = experimentAware.assignVariant(experimentName, query.userId());
+            if (activeVariant != null) {
+                experimentAware.recordExposure(experimentName, activeVariant);
+                PipelineMdc.put("experiment", experimentName);
+                PipelineMdc.put("experiment.variant", activeVariant.id());
+            }
+        }
         // Step 1: rewrite
         RewriteResult rewritten;
         try {

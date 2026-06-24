@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Application entry point.
@@ -37,6 +38,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
                                RedisRepositoriesAutoConfiguration.class
                        })
 @ConfigurationPropertiesScan("io.github.yysf1949.rag")
+@EnableScheduling // Phase 39 / R14 — ExperimentAutoWinnerRunner
 public class RagAppApplication {
 
     public static void main(String[] args) {

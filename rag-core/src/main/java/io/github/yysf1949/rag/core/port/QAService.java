@@ -46,4 +46,24 @@ public interface QAService {
      *         The {@code source} field records which leg produced the text.
      */
     Answer answer(Query query);
+
+    /**
+     * Record an A/B outcome for the named experiment. The HTTP layer calls
+     * this when the user signals feedback (thumbs-up / citation click / etc.).
+     * Calling this on a query that wasn't routed to any experiment is a
+     * no-op — implementations look up the experiment by name and silently
+     * ignore unknown names.
+     *
+     * @param experimentName name of the experiment the variant belongs to
+     * @param variantId      id of the variant that was exposed
+     * @param positive       true for a positive signal, false for negative
+     * @param query          the original query — used as the subject id when
+     *                       implementations want to record an exposure too.
+     *                       May be {@code null} if the call site only knows
+     *                       the variant and not the query.
+     */
+    default void recordExperimentOutcome(String experimentName, String variantId,
+                                         boolean positive, Query query) {
+        // default no-op — production impls override via QAServiceImpl
+    }
 }
