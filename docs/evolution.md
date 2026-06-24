@@ -1493,3 +1493,48 @@ React 18 + Vite + Tailwind CSS + shadcn/ui + OpenAPI TypeScript client
 - `JwtAuthEndToEndIT` package-private (failsafe skip)
 - `CouponRepositoryPort` missing impl (pre-existing tech debt)
 - `MockAdminControllerTest` 4/5 fail (filter chain timing, 调查中)
+
+---
+
+## Phase 41: GDPR 合规 + Rerank 模型选型 (commits 1aa7fda, 360ed10, merged to main)
+
+### T1: GDPR 用户删除接口 (R17 Article 17)
+- `GdprDeletionService` 端口 + `DefaultGdprDeletionService` 实现
+- Cascade 6 数据源: feedback + chat_memory + audit_logs + quota + invoice (+ chunks 占位)
+- `GdprController`: `DELETE /api/gdpr/users/{userId}` + `DELETE /api/gdpr/tenants/{tenantId}`
+- 用户级删除: 仅删用户交互数据 (feedback/memory/audit), 不删 KB 文档
+- 租户级删除: 全量删除包括 quota + invoice (合同终止场景)
+- 审计追踪: 删除操作本身记录审计日志 (L4 风险等级)
+- 5 tests: cascade 正确性 + 幂等 + 跨租户隔离
+
+### T2: Rerank A/B 选型 (R18)
+- `BgeRerankService`: BGE bge-reranker-v2-m3 mock (精确匹配导向, 关键词权重 0.5)
+- `BcEmbeddingRerankService`: BCEmbedding bce-reranker-base mock (语义模糊匹配, n-gram 权重 0.4)
+- `RerankBenchmark`: nDCG@5 + Precision@1 + MRR 三指标评测 + 自动选型报告
+- Mock 评分函数设计: 确定性 (同 query 同结果), 评分区间 [0,1], 模拟不同模型行为特征
+- 5 tests: 评分区间 + 排序合理性 + A/B 报告生成 + 模型差异 + 空候选
+
+### 文件清单 (9 files, +1114 LOC)
+**rag-agent (5 files)**:
+- `gdpr/GdprDeletionService.java` — 端口接口
+- `gdpr/GdprDeletionResult.java` — 删除结果 record
+- `gdpr/DefaultGdprDeletionService.java` — JDBC cascade 实现
+- `web/GdprController.java` — REST API
+- `gdpr/GdprDeletionServiceTest.java` — 5 测试
+
+**rag-embedding (4 files)**:
+- `bge/BgeRerankService.java` — BGE mock
+- `bcembedding/BcEmbeddingRerankService.java` — BCEmbedding mock
+- `eval/RerankBenchmark.java` — 评测器 + 报告生成
+- `eval/RerankBenchmarkTest.java` — 5 测试
+
+### 测试增量
+- rag-agent: 644 → 649 (+5 GDPR)
+- rag-embedding: 27 → 32 (+5 Rerank)
+- 总计 ~992 → ~1002 (+10), 0 failure (Phase 41 新增)
+
+### 已知偏差 / Tech Debt
+- `StripePaymentAdapter` 无默认构造函数 (Phase 40 T4 pre-existing, 导致 rag-app 部分测试 context 加载失败)
+- `MockAdminControllerTest` 4/5 fail (Phase 34 pre-existing)
+- GDPR chunk 删除占位 (需通过 IngestService 元数据查 documentId, 当前简化)
+- Rerank 选型用 Mock 评分 (生产需真实模型 API 复测)
