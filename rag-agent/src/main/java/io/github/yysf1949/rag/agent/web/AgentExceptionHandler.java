@@ -47,6 +47,15 @@ public class AgentExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
     }
 
+    /**
+     * Phase 40 T1: 反馈参数非法 (thumb/rating/comment 全空) → 400 Bad Request.
+     * 用 {@link FeedbackValidationException} 单独映射, 不影响其它 IllegalArgumentException 行为.
+     */
+    @ExceptionHandler(FeedbackValidationException.class)
+    public ProblemDetail handleFeedbackValidation(FeedbackValidationException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
     @ExceptionHandler(HandoffRequiredException.class)
     public ProblemDetail handleHandoffRequired(HandoffRequiredException e) {
         // Phase 13b M6: 业务规则命中"必须人工" → 422 Unprocessable Entity
