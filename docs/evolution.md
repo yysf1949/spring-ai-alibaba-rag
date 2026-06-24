@@ -1315,3 +1315,181 @@ Total new tests: 23
 | rag-app | 8 (18 skip/error) | 26 (2 skip) | **+18** | smoke test Redis 修复 |
 | rag-test | 2 (2 skip) | 2 (2 skip) | - | - |
 | **总计** | **~856** | **~880** | **+24** | 0 fail, checkstyle:check 通过 |
+
+---
+
+## Phase 33: Eval CI 闸门 + 退款规则 E2E (commit 5dc52b1, merged to main)
+
+### T1: Eval fixtures 扩充 (commit 5517ba2)
+- 11 → 25 fixtures, 6 categories (退款/比价/库存/物流/客诉/通用)
+- 新增 `EvalFixture` 分类标签 + 优先级字段
+
+### T2: RefundRuleEndToEndTest 扩展 (commit 29c1a6a)
+- 1 → 6 scenarios: 全额退款/部分退款/超期拒绝/条件退款/批量退款/边界
+
+### T3: GitLab CI eval stage (commit 2019837)
+- `.gitlab-ci.yml` 新增 `eval` stage, manual trigger
+- gated by `SILICONFLOW_API_KEY` (CI/CD variable)
+
+### T4: 回归历史 + 最终验证 (commit 5dc52b1)
+- `docs/eval/regression-history.md` 记录每次 eval 运行结果
+- 880 → 883 tests, 0 fail
+
+---
+
+## Phase 34: 安全加固 (JWT + Rate Limit) (commits 313eaf2 → 1ac0209, merged to main)
+
+### T34a: JWT/OAuth2 + Rate Limiter (commits 313eaf2, 1131972)
+- `JwtTenantFilter` — HS256 JWT 校验, 替换裸 `X-Tenant-Id` header
+- `TenantRateLimiter` — Redis sliding window Lua 脚本 (QPS 限流)
+- Spring Security 6.x resource-server 接入, scope = kb:read/write/agent:invoke
+- 3 个新测试, RateLimiter 在 rag-redis 模块
+
+### T34b: Admin API auth + Audit Channel (commit f634675)
+- `ROLE_ADMIN` 权限校验 Admin API
+- `AuditChannel` 新增 `TENANT_CONFIG_CHANGE` 事件类型
+- Admin 操作全链路审计
+
+### Phase 34.5: JWT Auth fixes (commit 1ac0209)
+- `setAuthenticated` 修复 — SecurityContext 未正确传播
+- Filter order 调整 — JwtTenantFilter 在 Spring Security filter chain 之前
+- `JwtAuthEndToEndIT` package-private (failsafe skip)
+
+### 测试增量
+- rag-agent: 538 → 556 (+18), rag-redis: 69 → 72 (+3)
+- 总计 ~883 → ~906, 0 fail
+
+---
+
+## Phase 35: Multipart 上传端点 (commit 2a3b0bc, merged to main)
+
+### 重建背景
+原 Phase 35 (t_b14c7d56) archived — dispatcher 时序 bug 导致代码丢失。
+重建 v2 (t_d69eeb14) 绕开 dispatcher, 直接在 worktree 实现。
+
+### 实现
+- `IngestController` 新增 `@PostMapping(consumes = MULTIPART_FORM_DATA_VALUE)`
+- 支持 `@RequestPart MultipartFile` + `@RequestPart("request") IngestRequest` 组合
+- 保持原 JSON 端点向后兼容
+- `IngestControllerMultipartSmokeTest` — happy path + 错误格式测试
+
+### 测试增量
+- rag-app: 26 → 28 (+2), 0 fail
+
+---
+
+## Phase 36: 知识库管理后台 UI (commits ea30257 → 4d47477, merged to main)
+
+### 技术栈
+React 18 + Vite + Tailwind CSS + shadcn/ui + OpenAPI TypeScript client
+
+### T1: 项目骨架 (commit ea30257)
+- `rag-ui/` 目录: Vite + React 18 + TypeScript + Tailwind + shadcn/ui
+- `openapi-typescript` 自动生成 TS client from `docs/openapi/openapi.json`
+- `HomePage` + 路由 (`react-router-dom`)
+
+### T2a: /ingest 拖拽上传页 (commit 0c9f54e)
+- `react-dropzone` PDF 拖拽上传
+- multipart upload → `POST /api/ingest/multipart` (Phase 35)
+- 上传进度 + job 状态轮询
+
+### T2b: /preview 分块预览页 (commit 266de9e)
+- `GET /api/ingest/jobs/{jobId}` → chunk 列表
+- chunk metadata + 文本高亮预览
+- counter-based pagination
+
+### T2c: /versions 版本对比页 (commit bb67cf2)
+- KB version v1 vs v2 chunk-by-chunk diff
+- `GET /api/kb/versions` → 版本列表
+- `GET /api/kb/versions/{v1}/diff/{v2}` → diff 结果
+
+### T3: 灰度发布 UI (commit 4d47477)
+- `/gradual` active pointer 切换 + 回滚历史
+- `/rate-limit` Rate Limit 配置 stub (Phase 34 联动)
+
+---
+
+## Phase 38: 多 LLM 智能路由 + 成本监控 (commit 62f9872, merged to main)
+
+### T1: LlmRouter port
+- 规则引擎: query 类型 / 成本 / SLA → provider 选择
+- `LlmRouter` 接口 + `RuleBasedLlmRouter` 实现
+
+### T2: Provider 注册表
+- SiliconFlow / DeepSeek / OpenAI / Claude / Qwen
+- `LlmProvider` registry + 动态切换
+
+### T3: 成本监控
+- Micrometer 指标: `llm.cost.cents`, `llm.tokens.input`, `llm.tokens.output`
+- Prometheus scrape endpoint
+
+### T4: 熔断联动
+- 与 Phase 32 `FailureClassificationRouter` 联动
+- LLM 故障 → 自动切 fallback provider
+
+### 测试增量
+- rag-agent: 556 → 558 (+2), 0 fail
+
+---
+
+## Phase 40: 用户反馈闭环 + 多租户订阅计费 (commits 7d7a8cc → 9a19e8a, merged to main)
+
+### T1: 用户反馈 API (commit 17bb16c, merged 7d7a8cc)
+- `FeedbackPort` 六边形接口
+- 3 存储后端: `InMemoryFeedbackRepository` / `H2FeedbackRepository` / `RedisFeedbackRepository`
+- `FeedbackController` 4 endpoints (POST/GET list/GET by id/DELETE)
+- thumb/rating/comment 三选一校验 + 跨租户隔离 (404)
+- 12 new files, +1085 LOC, 12 new tests
+
+### T2: 反馈 JSONL 导出 (commit 7673562, merged 25b5c0f)
+- `GET /api/feedback/export?format=jsonl` → JSONL 导出
+- 用于微调 pipeline 训练数据采集 (R10 Active Learning)
+- 按时间范围 + tenant 过滤
+
+### T3: 多租户用量配额 (commit 2664c08, merged bc8b225)
+- `TenantQuota` + `TenantTier` (FREE/PRO/ENTERPRISE)
+- `TenantQuotaEnforcer` — 月度配额校验 + 超限自动降级
+- `UsageMeter` — calls + tokens 月度计数
+- 3 存储后端: InMemory / H2 / Redis
+- `TenantQuotaController` — admin 管理接口
+- 21 new files, +1967 LOC, 6 new test classes
+
+### T4: Stripe + 微信支付 (commit 936e341, merged 25b5c0f)
+- `PaymentPort` 六边形接口
+- `StripePaymentAdapter` — Stripe API client + webhook 签名验证
+- `WeChatPayAdapter` — 微信支付 API client + 签名
+- `InvoiceStore` — 发票管理 (InMemory + H2)
+- `InvoiceController` + `StripeWebhookController` + `WeChatWebhookController`
+- mock E2E (DoD 要求 mock, 不接真实 sandbox)
+
+### T5: Admin UI (commit 3215bb4, merged 9a19e8a)
+- `/usage` — tenant 用量 dashboard (月度 calls + tokens 图表)
+- `/invoices` — 账单列表 + 状态筛选
+- `/quotas` — 配额管理 + tier 切换
+- vitest + React Testing Library + MSW E2E (1/1 pass)
+- 13 new files, +4247 LOC
+
+### 数据库表增量
+- Phase 40 新增 3 表: `agent_tenant_quota`, `agent_usage_counter`, `agent_invoice`
+- StoreAutoConfiguration: 10 → 13 tables
+
+### 全仓库测试增量 (Phase 33-40 合计)
+| 模块 | Phase 32 末 | Phase 40 末 | 增量 |
+|---|---|---|---|
+| rag-core | 18 | 18 | - |
+| rag-redis | 69 (23 skip) | 72 (23 skip) | +3 |
+| rag-agent | 538 | **644** (8 skip) | **+106** |
+| rag-embedding | 27 | 27 | - |
+| rag-pipeline | 200 | 200 | - |
+| rag-app | 26 (2 skip) | 28 (2 skip) | +2 |
+| rag-test | 2 (2 skip) | 2 (2 skip) | - |
+| rag-ui | - | 1 (vitest) | +1 |
+| **总计** | **~880** | **~992** | **+112** |
+
+### 已知偏差 / Tech Debt
+- Phase 37 (人工坐席工作台): 看板标 done 但代码从未 ship, 标记为孤儿 done
+- Phase 39 (Embedding微调 + A/B + Streaming Citation): 归档, 从未实现, 需重建
+- Phase 41 (GDPR + Rerank): 归档, 从未实现, 需重建
+- `JwtAuthEndToEndIT` package-private (failsafe skip)
+- `CouponRepositoryPort` missing impl (pre-existing tech debt)
+- `MockAdminControllerTest` 4/5 fail (filter chain timing, 调查中)
