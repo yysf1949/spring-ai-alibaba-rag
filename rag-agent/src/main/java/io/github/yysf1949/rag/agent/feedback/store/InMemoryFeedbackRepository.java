@@ -75,4 +75,20 @@ public class InMemoryFeedbackRepository implements FeedbackPort {
         }
         return n;
     }
+
+    @Override
+    public List<FeedbackRecord> findByTenantRange(String tenantId, Long fromMs, Long toMs, int limit) {
+        List<FeedbackRecord> out = new ArrayList<>();
+        for (FeedbackRecord r : store.values()) {
+            if (!r.tenantId().equals(tenantId)) continue;
+            if (fromMs != null && r.createdAt() < fromMs) continue;
+            if (toMs != null && r.createdAt() > toMs) continue;
+            out.add(r);
+        }
+        out.sort(Comparator.comparingLong(FeedbackRecord::createdAt));
+        if (out.size() > limit) {
+            return new ArrayList<>(out.subList(0, limit));
+        }
+        return out;
+    }
 }

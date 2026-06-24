@@ -125,4 +125,77 @@ class InMemoryFeedbackRepositoryTest {
                 null, null, 6, null, "api", null, 1L))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    // ---- Phase 40 T2: findByTenantRange ----
+
+    @Test
+    void findByTenantRangeWithFromOnly() {
+        repo.save(new FeedbackRecord("FB-1", "t1", "u", "c",
+                null, Thumb.UP, null, null, "api", null, 100L));
+        repo.save(new FeedbackRecord("FB-2", "t1", "u", "c",
+                null, Thumb.UP, null, null, "api", null, 200L));
+        repo.save(new FeedbackRecord("FB-3", "t1", "u", "c",
+                null, Thumb.UP, null, null, "api", null, 300L));
+
+        var found = repo.findByTenantRange("t1", 200L, null, 100);
+        assertThat(found).extracting(FeedbackRecord::feedbackId)
+                .containsExactly("FB-2", "FB-3");
+    }
+
+    @Test
+    void findByTenantRangeWithToOnly() {
+        repo.save(new FeedbackRecord("FB-1", "t1", "u", "c",
+                null, null, null, null, "api", null, 100L));
+        repo.save(new FeedbackRecord("FB-2", "t1", "u", "c",
+                null, null, null, null, "api", null, 200L));
+        repo.save(new FeedbackRecord("FB-3", "t1", "u", "c",
+                null, null, null, null, "api", null, 300L));
+
+        var found = repo.findByTenantRange("t1", null, 200L, 100);
+        assertThat(found).extracting(FeedbackRecord::feedbackId)
+                .containsExactly("FB-1", "FB-2");
+    }
+
+    @Test
+    void findByTenantRangeBothBoundsInclusive() {
+        repo.save(new FeedbackRecord("FB-1", "t1", "u", "c",
+                null, null, null, null, "api", null, 100L));
+        repo.save(new FeedbackRecord("FB-2", "t1", "u", "c",
+                null, null, null, null, "api", null, 200L));
+        repo.save(new FeedbackRecord("FB-3", "t1", "u", "c",
+                null, null, null, null, "api", null, 300L));
+
+        var found = repo.findByTenantRange("t1", 100L, 200L, 100);
+        assertThat(found).extracting(FeedbackRecord::feedbackId)
+                .containsExactly("FB-1", "FB-2");
+    }
+
+    @Test
+    void findByTenantRangeIsolatesTenant() {
+        repo.save(new FeedbackRecord("FB-a", "t1", "u", "c",
+                null, null, null, null, "api", null, 100L));
+        repo.save(new FeedbackRecord("FB-b", "t2", "u", "c",
+                null, null, null, null, "api", null, 100L));
+
+        var found = repo.findByTenantRange("t1", null, null, 100);
+        assertThat(found).hasSize(1);
+        assertThat(found.get(0).feedbackId()).isEqualTo("FB-a");
+    }
+
+    @Test
+    void findByTenantRangeRespectsLimit() {
+        for (int i = 0; i < 10; i++) {
+            repo.save(new FeedbackRecord("FB-" + i, "t1", "u", "c",
+                    null, null, null, null, "api", null, 1000L + i));
+        }
+        var found = repo.findByTenantRange("t1", null, null, 3);
+        assertThat(found).hasSize(3);
+        assertThat(found.get(2).feedbackId()).isEqualTo("FB-2");
+    }
+
+    @Test
+    void findByTenantRangeEmptyTenantReturnsEmpty() {
+        var found = repo.findByTenantRange("nope", null, null, 100);
+        assertThat(found).isEmpty();
+    }
 }

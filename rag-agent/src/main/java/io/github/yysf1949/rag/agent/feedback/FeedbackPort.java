@@ -29,7 +29,7 @@ import java.util.Optional;
  *
  * <h2>升级路径</h2>
  * <p>生产可换 MySQL/PostgreSQL + Flyway 迁移。本 Phase 实现 InMemory + H2 + Redis。
- * JSONL 导出 (Phase 40 T2) 走 {@link #findByTenant(String, int)} 流式输出。</p>
+ * JSONL 导出 (Phase 40 T2) 走 {@link #findByTenantRange} 流式输出。</p>
  */
 public interface FeedbackPort {
 
@@ -66,6 +66,27 @@ public interface FeedbackPort {
      * 统计某租户的总反馈数。
      */
     long countByTenant(String tenantId);
+
+    /**
+     * Phase 40 T2: 按租户 + 时间范围查询反馈（用于 JSONL 导出）。
+     *
+     * <p>{@code fromMs} / {@code toMs} 为 epoch millis；任一为 {@code null} 表示
+     * 该端无界。返回按 {@code createdAt} 升序排列，便于增量训练数据按时间排序。</p>
+     *
+     * <p>实现要求：
+     * <ul>
+     *   <li>真实流式行为 — 建议 H2 用 {@code JdbcTemplate.queryForStream}，
+     *       Redis 用 {@code ZRANGEBYSCORE} + 游标式 HGETALL，
+     *       InMemory 按已排序 List 顺序逐条 yield</li>
+     *   <li>{@code limit} 是软上限，超过即停 — 不要为了 limit 多查一条</li>
+     * </ul></p>
+     *
+     * @param tenantId 租户 ID（硬隔离）
+     * @param fromMs 时间下界 (epoch millis, 含)，{@code null} = 无下界
+     * @param toMs   时间上界 (epoch millis, 含)，{@code null} = 无上界
+     * @param limit  最多返回条数 (建议 1000-10000)
+     */
+    List<FeedbackRecord> findByTenantRange(String tenantId, Long fromMs, Long toMs, int limit);
 
     /**
      * 反馈持久化记录。

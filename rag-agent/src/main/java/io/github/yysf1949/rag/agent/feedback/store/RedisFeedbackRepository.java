@@ -122,6 +122,26 @@ public class RedisFeedbackRepository implements FeedbackPort {
         }
     }
 
+    @Override
+    public List<FeedbackRecord> findByTenantRange(String tenantId, Long fromMs, Long toMs, int limit) {
+        try {
+            String zsetKey = factory.key("feedback:by-tenant", tenantId);
+            // ZRANGEBYSCORE 用 -inf/+inf 当一端无界; score 即 createdAt.
+            String min = fromMs == null ? "-inf" : String.valueOf(fromMs);
+            String max = toMs == null ? "+inf" : String.valueOf(toMs);
+            List<String> ids = factory.jedis().zrangeByScore(zsetKey, min, max, 0, limit);
+            if (ids == null || ids.isEmpty()) return List.of();
+            List<FeedbackRecord> out = new ArrayList<>(ids.size());
+            for (String id : ids) {
+                Map<String, String> hash = factory.jedis().hgetAll(factory.key("feedback", id));
+                if (hash != null && !hash.isEmpty()) out.add(hydrate(hash));
+            }
+            return out;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query feedback by tenant range", e);
+        }
+    }
+
     private static FeedbackRecord hydrate(Map<String, String> hash) {
         Integer rating = hash.get("rating") == null ? null : Integer.parseInt(hash.get("rating"));
         return new FeedbackRecord(
