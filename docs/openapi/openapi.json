@@ -13,7 +13,8 @@
   ],
   "tags": [
     { "name": "Ingest", "description": "Asynchronous document ingest endpoints" },
-    { "name": "QA", "description": "Online question-answering endpoints" }
+    { "name": "QA", "description": "Online question-answering endpoints" },
+    { "name": "Admin", "description": "Phase 40 admin endpoints — usage, invoices, quotas (T3 + T4 + T5)" }
   ],
   "paths": {
     "/api/ingest": {
